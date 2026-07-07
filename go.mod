@@ -1,4 +1,4 @@
-module github.com/earendil-works/meta-search-tool
+module github.com/openmtx/meta-search-tool
 
 go 1.26
 

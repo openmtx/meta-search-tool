@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/earendil-works/meta-search-tool/internal/cli"
-	"github.com/earendil-works/meta-search-tool/internal/config"
+	"github.com/openmtx/meta-search-tool/internal/cli"
+	"github.com/openmtx/meta-search-tool/internal/config"
 )
 
 const version = "dev"
