@@ -308,8 +308,11 @@ Precedence is **lowest → highest** (later wins):
 
 1. **Built-in defaults** compiled into the binary (engine list, default weights,
    timeouts).
-2. **Global user config:** `$XDG_CONFIG_HOME/mst/config.yaml`
-   (`~/.config/mst/config.yaml` on most systems).
+2. **Global user config:** `$MST_CONFIG_HOME/config.yaml` if `MST_CONFIG_HOME`
+   is set (it points *directly* at the mst config directory, like
+   `DOCKER_CONFIG`); otherwise `~/.config/mst/config.yaml` on most systems.
+   `mst` owns its config location and does **not** read XDG desktop-environment
+   variables.
 3. **Environment variables** (e.g. `MST_ENGINES`, `BRAVE_API_KEY`, …). `mst`'s
    own control variables use the `MST_` prefix; vendor API-key variables keep
    their conventional names.
@@ -321,9 +324,11 @@ Precedence is **lowest → highest** (later wins):
 
 **Config discovery rules:** a **missing** config file is not an error — built-in
 defaults are used. Only a file that *exists* but is unreadable or malformed
-YAML is a config error (exit `2`). If `$XDG_CONFIG_HOME` is set but empty, `mst`
-falls back to `~/.config/mst/config.yaml` (matching the XDG spec's "treat empty
-as unset"). Unknown YAML fields are ignored but reported as warnings at `-v`.
+YAML is a config error (exit `2`). `mst` does **not** read XDG variables; its
+config location is owned via `MST_CONFIG_HOME` (the same `MST_` prefix used for
+its other control variables). If `MST_CONFIG_HOME` is set but empty, `mst`
+treats it as unset and falls back to `~/.config/mst/config.yaml`. Unknown YAML
+fields are ignored but reported as warnings at `-v`.
 
 ### Config file shape (example, YAML)
 
