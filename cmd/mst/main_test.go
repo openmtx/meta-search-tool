@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
+	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 )
@@ -343,6 +346,66 @@ func TestRun_RawNoMergeTableDeferred(t *testing.T) {
 		if !strings.Contains(errs, "not yet implemented") {
 			t.Errorf("%v: expected 'not yet implemented' message, got %s", args, errs)
 		}
+	}
+}
+
+// === Brave engine integration (httptest) ====================================
+
+// TestRun_Brave_E2E exercises the full pipeline with a real brave engine
+// backed by an httptest server: dispatch → rank → format → exit code.
+func TestRun_Brave_E2E(t *testing.T) {
+	fixture := map[string]any{
+		"web": map[string]any{
+			"results": []map[string]any{
+				{"title": "Go Concurrency", "url": "https://go.dev/doc/concurrency", "snippet": "Go concurrency model."},
+				{"title": "Goroutines", "url": "https://go.dev/blog/concurrency", "snippet": "Introduction to goroutines."},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fixture)
+	}))
+	defer ts.Close()
+
+	// Point brave at the test server.
+	origBase := brave.APIBase()
+	brave.SetAPIBase(ts.URL + "/")
+	defer brave.SetAPIBase(origBase)
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(brave.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errs := runWith(t, []string{"-n", "5", "go concurrency"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\n%s", err, out)
+	}
+	if env.Schema != 1 {
+		t.Errorf("schema = %d, want 1", env.Schema)
+	}
+	if len(env.Results) != 2 {
+		t.Fatalf("results = %d, want 2", len(env.Results))
+	}
+	// Brave results should carry through the ranker.
+	if env.Results[0].Title != "Go Concurrency" {
+		t.Errorf("top result title = %q, want Go Concurrency", env.Results[0].Title)
+	}
+	if env.Results[0].URL != "https://go.dev/doc/concurrency" {
+		t.Errorf("top result url = %q, want https://go.dev/doc/concurrency", env.Results[0].URL)
+	}
+	// The engines block should show brave as ok.
+	if bs, ok := env.Engines["brave"]; !ok || !bs.OK {
+		t.Errorf("engines block: brave = %+v, want ok=true", env.Engines["brave"])
 	}
 }
 
