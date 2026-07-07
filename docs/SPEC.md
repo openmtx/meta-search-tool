@@ -105,7 +105,12 @@ before query resolution.
 
 **Engine selection precedence:** `--engine` sets the active set (whitelist);
 `--exclude` then removes engines from that set (so `--exclude` wins on conflict).
-A keyed engine missing its key is auto-skipped unless named in `--require`.
+A keyed engine missing its key is auto-skipped unless named in `--require`. An
+**unknown engine name** (not in the registry) in `--engine`, `--exclude`, or
+`--require` is a usage error → exit `2`, with the valid engine names listed in the
+structured error message so the caller can self-correct — the same shape as the
+`--weight` unknown-name rule below (e.g. `unknown engine 'bogus'; valid: brave,
+mojeek, wikipedia, …`).
 
 **Weight semantics:** `--weight ENGINE=FLOAT` overrides *only* the named
 engine's weight; all other engines keep their configured/default weights (it
