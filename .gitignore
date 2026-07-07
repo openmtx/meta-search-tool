@@ -1,0 +1,30 @@
+# Build artifacts — the `mst` binary and compiled test binaries
+/mst
+/mst.exe
+*.exe
+*.test
+/dist/
+/build/
+
+# Go — keep go.mod / go.sum committed; ignore local workspace + coverage output
+go.work
+go.work.sum
+coverage.txt
+coverage.out
+coverage.html
+
+# Secrets / environment — mst reads engine API keys from env; never commit keys
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
