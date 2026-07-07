@@ -28,3 +28,9 @@ coverage.html
 # OS
 .DS_Store
 Thumbs.db
+
+# Local working/process files — internal only, never shipped
+/AGENTS.md
+/TASKS.md
+/PROGRESS.md
+/DECISIONS.md
