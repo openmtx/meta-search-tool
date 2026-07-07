@@ -1,13 +1,24 @@
 // Package cli handles command-line flag parsing and binding.
+//
+// Flags are parsed with spf13/pflag (decision 2026-07-07) so the CLI can offer
+// the short aliases and repeatable count flag documented in spec §4 —
+// -e/--engine, -n/--limit, -f/--format, and -v/-vv for verbosity — none of
+// which Go's stdlib flag package can express.
 package cli
 
 import (
-	"flag"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/spf13/pflag"
 )
+
+// ErrHelp signals that the user requested --help; callers should exit 0.
+// (pflag has already printed usage to stderr.)
+var ErrHelp = errors.New("help requested")
 
 // Flags holds all parsed CLI flags.
 type Flags struct {
@@ -33,7 +44,8 @@ type Flags struct {
 }
 
 // Parse parses the CLI flags. The query is taken from positional arguments
-// (joined by spaces) or from stdin (--stdin).
+// (joined by single spaces) or from stdin (--stdin). Short aliases per §4:
+// -e/--engine, -n/--limit, -f/--format, -v/--verbose (repeatable count).
 func Parse() (*Flags, error) {
 	f := &Flags{
 		Limit:   10,
@@ -42,42 +54,42 @@ func Parse() (*Flags, error) {
 		Timeout: "8s",
 	}
 
-	fs := flag.NewFlagSet("mst", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("mst", pflag.ContinueOnError)
 
-	fs.StringVar(&f.Format, "format", "json", "Output format: json | jsonl | text | table")
-	fs.IntVar(&f.Limit, "limit", 10, "Max number of merged results to return")
-	fs.IntVar(&f.Offset, "offset", 0, "Skip the first N merged results (best-effort pagination)")
-	fs.StringVar(&f.Timeout, "timeout", "8s", "Global timeout for the run (e.g. 5s, 500ms)")
-	fs.StringVar(&f.PerEngineTimeout, "per-engine-timeout", "", "Per-engine timeout (defaults to min(--timeout, 6s))")
-	fs.IntVar(&f.RRFK, "rrf-k", 60, "RRF smoothing constant")
-	fs.BoolVar(&f.Stdin, "stdin", false, "Read query from stdin")
-	fs.StringVar(&f.Config, "config", "", "Path to explicit config file")
-	fs.BoolVar(&f.ListEngines, "list-engines", false, "List all engines and exit")
-	fs.BoolVar(&f.Version, "version", false, "Print version and exit")
-	fs.BoolVar(&f.Strict, "strict", false, "Exit 3 if any engine failed")
-	fs.BoolVar(&f.NoMerge, "no-merge", false, "Keep results grouped per-engine")
-	fs.BoolVar(&f.Raw, "raw", false, "Emit raw per-engine payloads")
-
-	// Repeatable flags.
 	var enginesStr, excludeStr, requireStr string
 	var weightStrs []string
-	var verbose int
 
-	fs.StringVar(&enginesStr, "engine", "", "Comma-separated engine whitelist")
-	fs.StringVar(&excludeStr, "exclude", "", "Comma-separated engine blacklist")
-	fs.StringVar(&requireStr, "require", "", "Comma-separated required engines")
-	fs.Var(&weightFlag{values: &weightStrs}, "weight", "Per-engine weight override (repeatable)")
-	fs.IntVar(&verbose, "verbose", 0, "Verbosity level (-v = 1, -vv = 2)")
+	// Tier 1 — skill-facing (§4).
+	fs.StringVarP(&f.Format, "format", "f", "json", "Output format: json | jsonl | text | table")
+	fs.IntVarP(&f.Limit, "limit", "n", 10, "Max number of merged results to return")
+	fs.IntVar(&f.Offset, "offset", 0, "Skip the first N merged results (best-effort pagination)")
+	fs.BoolVar(&f.Stdin, "stdin", false, "Read query from stdin")
+	fs.StringVarP(&enginesStr, "engine", "e", "", "Comma-separated engine whitelist (e.g. brave,ddg)")
+	fs.StringVar(&excludeStr, "exclude", "", "Comma-separated engines to disable for this run")
+	fs.StringArrayVarP(&weightStrs, "weight", "", nil, "Per-engine weight override ENGINE=FLOAT (repeatable)")
+	fs.BoolVar(&f.ListEngines, "list-engines", false, "List every engine (name/status/weight) and exit")
+	fs.BoolVar(&f.Version, "version", false, "Print version and exit")
 
-	// Parse known flags.
+	// Tier 2 — tuning.
+	fs.StringVar(&requireStr, "require", "", "Comma-separated engines that must run")
+	fs.BoolVar(&f.Strict, "strict", false, "Exit 3 if any engine that ran failed or timed out")
+	fs.IntVar(&f.RRFK, "rrf-k", 60, "RRF smoothing constant; smaller = more top-heavy")
+	fs.StringVar(&f.Timeout, "timeout", "8s", "Global timeout for the run (e.g. 5s, 500ms)")
+
+	// Tier 3 — debug/internal.
+	fs.StringVar(&f.PerEngineTimeout, "per-engine-timeout", "", "Per-engine timeout (defaults to min(--timeout, 6s))")
+	fs.BoolVar(&f.NoMerge, "no-merge", false, "Keep results grouped per-engine instead of merged")
+	fs.BoolVar(&f.Raw, "raw", false, "Emit raw per-engine payloads without normalization (JSON only)")
+	fs.StringVar(&f.Config, "config", "", "Path to an explicit config file (overrides discovery)")
+	fs.CountVarP(&f.Verbose, "verbose", "v", "Verbosity level (-v = 1, -vv = 2)")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return f, ErrHelp
+		}
 		return nil, fmt.Errorf("flag parse error: %w", err)
 	}
 
-	f.Verbose = verbose
-	f.Format = resolveFormat(f.Format, f.Raw)
-
-	// Parse comma-separated lists.
 	if enginesStr != "" {
 		f.Engines = splitComma(enginesStr)
 	}
@@ -91,8 +103,8 @@ func Parse() (*Flags, error) {
 	// Parse weight overrides.
 	f.Weight = make(map[string]float64)
 	for _, ws := range weightStrs {
-		// Split on the first '=' to separate ENGINE from FLOAT, so both
-		// --weight brave=2.0 and --weight=brave=2.0 parse the same way (§4).
+		// Split on the first '=' so both --weight brave=2.0 and --weight=brave=2.0
+		// parse the same way (§4).
 		parts := strings.SplitN(ws, "=", 2)
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid weight %q (expected ENGINE=FLOAT)", ws)
@@ -110,7 +122,6 @@ func Parse() (*Flags, error) {
 	if f.Stdin && len(positionalArgs) > 0 {
 		return nil, fmt.Errorf("specifying both --stdin and positional args is an error")
 	}
-
 	query := strings.Join(positionalArgs, " ")
 	if !f.Stdin {
 		// A positional query that is empty/whitespace-only is a usage error (§4).
@@ -122,34 +133,6 @@ func Parse() (*Flags, error) {
 	// f.Stdin: the query is read from stdin later in run().
 
 	return f, nil
-}
-
-// resolveFormat adjusts the format based on --raw.
-func resolveFormat(format string, raw bool) string {
-	if raw {
-		return "json"
-	}
-	return format
-}
-
-// weightFlag implements flag.Value for repeatable --weight flags.
-type weightFlag struct {
-	values *[]string
-}
-
-func (f *weightFlag) String() string {
-	// Guard against a nil receiver/values: Go's flag package reflects a
-	// zero-value flag.Value and calls String() on it (in isZeroValue), which
-	// would otherwise nil-deref and panic on every usage error.
-	if f == nil || f.values == nil || *f.values == nil {
-		return ""
-	}
-	return strings.Join(*f.values, ", ")
-}
-
-func (f *weightFlag) Set(s string) error {
-	*f.values = append(*f.values, s)
-	return nil
 }
 
 // splitComma splits a comma-separated string, trimming whitespace and filtering empty.

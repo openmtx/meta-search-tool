@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"testing"
 )
@@ -114,6 +115,59 @@ func TestParse_PerEngineTimeout(t *testing.T) {
 	}
 	if flags.PerEngineTimeout != "3s" {
 		t.Errorf("PerEngineTimeout = %q, want \"3s\"", flags.PerEngineTimeout)
+	}
+}
+
+func TestParse_ShortFlags(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	// -e/-n/-f are aliases of --engine/--limit/--format (spec §4).
+	os.Args = []string{"mst", "-e", "brave,ddg", "-n", "5", "-f", "jsonl", "query"}
+
+	flags, err := Parse()
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if flags.Limit != 5 {
+		t.Errorf("limit = %d, want 5", flags.Limit)
+	}
+	if flags.Format != "jsonl" {
+		t.Errorf("format = %q, want jsonl", flags.Format)
+	}
+	if len(flags.Engines) != 2 || flags.Engines[0] != "brave" || flags.Engines[1] != "ddg" {
+		t.Errorf("engines = %v, want [brave ddg]", flags.Engines)
+	}
+	if flags.Query != "query" {
+		t.Errorf("query = %q, want query", flags.Query)
+	}
+}
+
+func TestParse_VerboseCount(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	// -vv is the verbosity count flag at level 2 (spec §4).
+	os.Args = []string{"mst", "-vv", "q"}
+
+	flags, err := Parse()
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if flags.Verbose != 2 {
+		t.Errorf("verbose = %d, want 2", flags.Verbose)
+	}
+}
+
+func TestParse_HelpFlag(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	os.Args = []string{"mst", "--help"}
+
+	_, err := Parse()
+	if !errors.Is(err, ErrHelp) {
+		t.Errorf("Parse() err = %v, want ErrHelp", err)
 	}
 }
 

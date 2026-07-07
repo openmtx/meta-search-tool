@@ -47,7 +47,9 @@ agent harness.
 - Strong stdlib for HTTP, JSON, and context-based timeouts.
 
 Config parsing uses `gopkg.in/yaml.v3`; HTTP is stdlib `net/http` with
-`context`-based timeouts. Rust was considered (and handles fan-out/fan-in
+`context`-based timeouts. CLI flag parsing uses `github.com/spf13/pflag` so the
+short aliases (`-e`/`-n`/`-f`) and repeatable `-v`/`-vv` count flag in §4 work
+(they are beyond stdlib `flag`). Rust was considered (and handles fan-out/fan-in
 fine via `tokio` + `JoinSet`) but Go wins on toolchain simplicity and
 iteration speed for an I/O-bound CLI.
 

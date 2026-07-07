@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,6 +55,9 @@ func run() error {
 	// Parse CLI flags.
 	flags, err := cli.Parse()
 	if err != nil {
+		if errors.Is(err, cli.ErrHelp) {
+			return nil // usage already printed by pflag; exit 0
+		}
 		return &UsageError{Message: err.Error()}
 	}
 
