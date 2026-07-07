@@ -17,6 +17,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/cli"
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
+	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 	"github.com/openmtx/meta-search-tool/internal/search"
@@ -28,11 +29,16 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, defaultRegistry()))
 }
 
-// defaultRegistry builds the engine registry. No real engines ship until Stage 1;
-// the registry is empty here, so a default run yields exit 1 (no results). Tests
-// inject fake engines through run()'s registry parameter.
+// defaultRegistry builds the engine registry and registers all available engines.
+// Engines that require keys but don't have them set are auto-skipped at runtime
+// by resolvePlan (StatusMissingKey), so they appear in --list-engines as
+// "missing-key" rather than silently vanishing.
 func defaultRegistry() *engine.Registry {
-	return engine.NewRegistry()
+	reg := engine.NewRegistry()
+	if err := reg.Register(brave.New()); err != nil {
+		panic("brave: " + err.Error()) // duplicate name — impossible at compile time
+	}
+	return reg
 }
 
 // run is the testable core: parse flags → load config → resolve the engine plan →
