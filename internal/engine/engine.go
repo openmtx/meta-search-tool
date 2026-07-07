@@ -5,6 +5,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Engine is a pure data-fetching plugin. It knows nothing about dispatch,
@@ -43,6 +44,19 @@ type EngineInfo struct {
 	KeyEnv        string // env var name holding the key; empty if Keyed is false
 	DefaultWeight float64
 	Enabled       bool // default enabled state (false for fragile/opt-in engines)
+}
+
+// EngineRun is assembled by the dispatcher (internal/search), NOT by engines.
+// It carries the per-engine execution metadata surfaced in the output schema
+// (§10): which engine ran, its results in engine-native rank order, the error
+// (if it failed/timed out), and the wall-clock latency of the call. The ranker
+// (internal/rank, §9) consumes []EngineRun and produces its own aggregated
+// result type (rank, score, contributing engines[]).
+type EngineRun struct {
+	Engine  string
+	Results []Result // in engine-native rank order
+	Err     error
+	Latency time.Duration
 }
 
 // Status describes the operational state of a keyed engine.
