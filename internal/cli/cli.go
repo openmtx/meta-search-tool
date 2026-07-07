@@ -9,7 +9,7 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 
@@ -43,10 +43,11 @@ type Flags struct {
 	Version          bool
 }
 
-// Parse parses the CLI flags. The query is taken from positional arguments
-// (joined by single spaces) or from stdin (--stdin). Short aliases per §4:
-// -e/--engine, -n/--limit, -f/--format, -v/--verbose (repeatable count).
-func Parse() (*Flags, error) {
+// Parse parses CLI flags from args. out receives --help usage text (errors are
+// returned, not printed, so the caller can emit them as the §11 structured
+// object). Short aliases per §4: -e/--engine, -n/--limit, -f/--format,
+// -v/--verbose (repeatable count).
+func Parse(args []string, out io.Writer) (*Flags, error) {
 	f := &Flags{
 		Limit:   10,
 		Format:  "json",
@@ -55,6 +56,16 @@ func Parse() (*Flags, error) {
 	}
 
 	fs := pflag.NewFlagSet("mst", pflag.ContinueOnError)
+	// Suppress pflag's own error/usage printing: run() emits every diagnostic as the
+	// §11 structured object, so stderr never carries two formats at once. --help
+	// usage is printed explicitly below.
+	fs.SetOutput(io.Discard)
+	// pflag leaves FlagSet.Usage nil by default (calling it panics); assign a
+	// real printer so we can invoke it on --help.
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage:\n  mst [flags] <query...>\n\nFlags:\n")
+		fs.PrintDefaults()
+	}
 
 	var enginesStr, excludeStr, requireStr string
 	var weightStrs []string
@@ -83,11 +94,13 @@ func Parse() (*Flags, error) {
 	fs.StringVar(&f.Config, "config", "", "Path to an explicit config file (overrides discovery)")
 	fs.CountVarP(&f.Verbose, "verbose", "v", "Verbosity level (-v = 1, -vv = 2)")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
+			fs.SetOutput(out)
+			fs.Usage()
 			return f, ErrHelp
 		}
-		return nil, fmt.Errorf("flag parse error: %w", err)
+		return nil, err
 	}
 
 	if enginesStr != "" {

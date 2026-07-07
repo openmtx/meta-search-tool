@@ -1,22 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
-	"os"
+	"io"
 	"testing"
 )
 
 func TestParse_BasicFlags(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--limit", "5", "--format", "jsonl"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"--limit", "5", "--format", "jsonl"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-
 	if flags.Limit != 5 {
 		t.Errorf("limit = %d, want 5", flags.Limit)
 	}
@@ -26,48 +21,30 @@ func TestParse_BasicFlags(t *testing.T) {
 }
 
 func TestParse_VersionFlag(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--version"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"--version"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-
 	if !flags.Version {
 		t.Error("Version should be true")
 	}
 }
 
 func TestParse_ListEnginesFlag(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--list-engines"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"--list-engines"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-
 	if !flags.ListEngines {
 		t.Error("ListEngines should be true")
 	}
 }
 
 func TestParse_WeightFlag(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--weight", "brave=2.0", "--weight", "ddg=0.5"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"--weight", "brave=2.0", "--weight", "ddg=0.5"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
-
 	if len(flags.Weight) != 2 {
 		t.Fatalf("Weight map has %d entries, want 2", len(flags.Weight))
 	}
@@ -80,36 +57,19 @@ func TestParse_WeightFlag(t *testing.T) {
 }
 
 func TestParse_StdinAndPositionalConflict(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--stdin", "some query"}
-
-	_, err := Parse()
-	if err == nil {
+	if _, err := Parse([]string{"--stdin", "some query"}, io.Discard); err == nil {
 		t.Error("Parse() expected error for --stdin + positional args, got nil")
 	}
 }
 
 func TestParse_WeightBadFloat(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--weight", "brave=notafloat", "q"}
-
-	_, err := Parse()
-	if err == nil {
+	if _, err := Parse([]string{"--weight", "brave=notafloat", "q"}, io.Discard); err == nil {
 		t.Fatal("Parse() expected error for non-numeric weight, got nil")
 	}
 }
 
 func TestParse_PerEngineTimeout(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--per-engine-timeout", "3s", "q"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"--per-engine-timeout", "3s", "q"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
@@ -119,13 +79,8 @@ func TestParse_PerEngineTimeout(t *testing.T) {
 }
 
 func TestParse_ShortFlags(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
 	// -e/-n/-f are aliases of --engine/--limit/--format (spec §4).
-	os.Args = []string{"mst", "-e", "brave,ddg", "-n", "5", "-f", "jsonl", "query"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"-e", "brave,ddg", "-n", "5", "-f", "jsonl", "query"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
@@ -144,13 +99,8 @@ func TestParse_ShortFlags(t *testing.T) {
 }
 
 func TestParse_VerboseCount(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
 	// -vv is the verbosity count flag at level 2 (spec §4).
-	os.Args = []string{"mst", "-vv", "q"}
-
-	flags, err := Parse()
+	flags, err := Parse([]string{"-vv", "q"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
@@ -160,14 +110,13 @@ func TestParse_VerboseCount(t *testing.T) {
 }
 
 func TestParse_HelpFlag(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"mst", "--help"}
-
-	_, err := Parse()
+	var buf bytes.Buffer
+	_, err := Parse([]string{"--help"}, &buf)
 	if !errors.Is(err, ErrHelp) {
 		t.Errorf("Parse() err = %v, want ErrHelp", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("--help should print usage to the provided writer")
 	}
 }
 
@@ -181,7 +130,6 @@ func TestSplitComma(t *testing.T) {
 		{"", nil},
 		{"brave", []string{"brave"}},
 	}
-
 	for _, tt := range tests {
 		got := splitComma(tt.input)
 		if len(got) != len(tt.want) {
