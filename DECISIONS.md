@@ -108,6 +108,13 @@ Entry template:
   other errors use `err.Error()` verbatim.
   **Status:** accepted (matches §11 wording).
 
+## 2026-07-08 — Wikipedia OpenSearch API response type
+
+- **Context:** The Wikipedia OpenSearch API returns a heterogeneous JSON array: `[query_string, [titles_array], [descriptions_array], [urls_array]]`. Go's `json.Unmarshal` cannot directly decode this into a single typed struct without a custom UnmarshalJSON.
+- **Decision:** Use `[]json.RawMessage` for the response type. This lets us unmarshal the raw JSON once, then selectively unmarshal elements 1-3 as `[]string` (the title/description/URL arrays). Element 0 is the query string (ignored by mst).
+- **Rationale:** Simpler than a custom UnmarshalJSON; zero-copy for the inner arrays; works cleanly with httptest fixtures.
+- **Status:** accepted — implemented in `internal/engine/wikipedia/wikipedia.go`.
+
 ## 2026-07-08 — Centralized retry/backoff in `internal/engine/retry` (§11)
 
 - **Context:** Sprints A.1.1 (brave) and A.1.2 (mojeek) each carried a verbatim
@@ -155,3 +162,36 @@ Entry template:
   real, ranked data and the failure is still transparently reported.
 - **Status:** accepted — folded into spec §7 (clarified the `(nil, error)`
   contract for paginating engines).
+
+## 2026-07-08 — DDG real-world selector/URL fidelity unverified (§5 Tier C)
+
+- **Context:** Sprint A.2.1 shipped the `ddg` HTML-scrape engine against
+  synthetic httptest fixtures. The §5 access notes give explicit selectors for
+  `mojeek` but are silent on DDG's exact HTML structure, and there is no
+  `MST_ITEST=1` live test (§14 lists it as optional; none exists in-repo). Two
+  real-world concerns surfaced in the A.2.1 review:
+  1. The golden-table fixture nests `h2.result__title`/`p.result__snippet`
+     *inside* `a.result__a` — the inverse of the live `html.duckduckgo.com/html/`
+     markup (`h2.result__title > a.result__a`; snippet as `a.result__snippet`).
+     The class-only descendant selectors (`div.result`, `a.result__a`,
+     `h2.result__title`, `.result__snippet`) are robust to both shapes, so
+     parsing *probably* works — but the test is near-tautological and does not
+     prove live correctness.
+  2. Live DDG wraps result URLs in `//duckduckgo.com/l/?uddg=<encoded>`
+     redirect links. `ddg.parseResults` does no redirect unwrapping, so a
+     wrapped href would flow into the ranker's canonicalizer / `source`
+     derivation unchanged, yielding a `duckduckgo.com` `source` (and a canonical
+     URL under `duckduckgo.com`) for every result.
+- **Decision / question:** Treat `ddg` as **unvalidated against the live site**
+  for v0.1. It is already off by default (§17.3) and labeled "best-effort,
+  fragile" (§5), so this does not block v0.1. **Before any release that
+  promotes `ddg` toward default-on or documents it for routine use: add an
+  `MST_ITEST=1` live test (§14) and (a) confirm the selectors against real
+  markup, (b) add `uddg=`/`/l/` redirect unwrapping if present** — or update the
+  spec §5 DDG note with the confirmed selectors. No code change now.
+- **Rationale:** §5 explicitly accepts DDG's fragility; shipping an opt-in
+  scrape engine without a live integration test is consistent with the spec.
+  Logging it here so it is tracked when DDG's reliability is next evaluated
+  (§18 lists `ddg`/`mojeek` scrape viability under monitoring).
+- **Status:** proposed (risk recorded; no spec change yet — re-evaluate at the
+  v0.2/`table` sprint or whenever `ddg` access is next touched).

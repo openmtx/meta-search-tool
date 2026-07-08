@@ -5,14 +5,100 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier A, Stage 1 complete → next is Stage 2 (A.2.1)
-- **Last:** 2026-07-08 — REVIEW.md action items implemented (shared retry pkg)
-- **Next:** Stage 2 — Sprint A.2.1 `wikipedia` + `ddg`
+- **Active:** Tier A, Stage 2 → Sprint A.2.1 (`wikipedia` + `ddg`) + review follow-up complete → next is A.2.2 hardening
+- **Last:** 2026-07-08 — A.2.1 review follow-up: P2 fixes (fastRetry hook on ddg/wikipedia; wikipedia malformed-payload error surfacing) + DDG-fidelity risk logged (DECISIONS.md). 206 tests green (-race); suite ~12s→3.4s
+- **Next:** Stage 2 — Sprint A.2.2 hardening: fuzz/property tests, `--list-engines`, exit/format polish → v0.1
 - **Last:** 2026-07-07 — Sprint A.1.1 follow-up: retry logic (§11) added to
   brave engine; +6 new tests, 129 total green (-race)
 - **Next:** Stage 1 — Sprint A.1.2 `mojeek` (keyless HTML scrape)
 
 ## Log
+
+## 2026-07-08 — Sprint A.2.1 review follow-up (P2 fixes + DDG risk)
+
+Implemented the P2 action items from the A.2.1 code review and logged the DDG
+real-world-fidelity risk.
+
+- **Done:**
+  - **P2 (test speed + consistency):** `ddg_test.go` and `wikipedia_test.go`
+    now have the `fastRetry(t)` helper (matching brave/mojeek) and call it in
+    every retry test. The `TestSearch_Retry_ContextCancelledDuringBackoff`
+    tests in both were rewritten to the canonical brave/mojeek form (no
+    `Retry-After: 3600`; `context.WithCancel` + goroutine + 20ms) so they stay
+    valid under the zeroed backoff. Measured: ddg pkg 4.9s→1.08s, wikipedia
+    pkg 5.3s→1.07s; full suite ~12s→~3.4s.
+  - **P2 (wikipedia malformed-payload handling):** `parseResults` now returns
+    `([]engine.Result, error)` and surfaces per-element `json.Unmarshal`
+    errors (and a `<4-elements` error) instead of silently discarding them.
+    Previously a valid-JSON-array response with non-string inner elements
+    (e.g. a schema change) flattened to `ok:true/count:0`; it now returns a
+    `malformed response` error. New regression test
+    `TestParseResults_MalformedInner`; `TestParseResults_TooFewArrays` updated
+    to expect an error; the 4 happy-path golden tests check `err`.
+  - **P3 (DDG-fidelity risk):** logged in DECISIONS.md — `ddg` selectors/URLs
+    are unverified against the live `html.duckduckgo.com/html/` markup and
+    result URLs are not `uddg=`/`/l/` redirect-unwrapped; track via an
+    `MST_ITEST=1` live test before promoting ddg. No code change (consistent
+    with §5 "best-effort, fragile").
+- **Verified:** `gofmt -l .` empty; `go vet ./...` clean; `go build ./...` ok;
+  `go test -race -count=1 ./...` → 12 packages ok, **206 tests green** (was 205
+  pre-fix +1 `MalformedInner`). Note: the prior A.2.1 entry's "217" was
+  inaccurate (measured 205 then, 206 now).
+- **Files changed:** `internal/engine/wikipedia/wikipedia.go`,
+  `internal/engine/wikipedia/wikipedia_test.go`,
+  `internal/engine/ddg/ddg_test.go`, `DECISIONS.md`.
+- **Blocked on:** nothing.
+- **Next:** Sprint A.2.2 — hardening (fuzz/property tests, `--list-engines`,
+  exit/format polish).
+
+## 2026-07-08 — Sprint A.2.1: `wikipedia` + `ddg`
+
+Implemented both remaining v0.1 engines.
+
+- **Done:**
+  - **`wikipedia`** (`internal/engine/wikipedia/`):
+    - `wikipedia.go` — Wikipedia OpenSearch API client
+      - HTTP GET to `https://en.wikipedia.org/w/api.php?action=opensearch`
+      - Parses JSON response `[query, [titles], [descriptions], [urls]]` into `[]engine.Result`
+      - Limit capped at 20, floored at 1 (Wikipedia API limits)
+      - Retry via shared `internal/engine/retry` package
+    - `wikipedia_test.go` — 16 tests:
+      - **Descriptor:** Name/keyed/weight/enabled
+      - **Golden-table parse:** Normal (2 results), empty, skip-empty-URL, mismatched-lengths, too-few-arrays
+      - **httptest round-trip:** Verifies headers, parses fixture into `[]Result`
+      - **buildRequestURL:** 3 cases (normal, cap at 20, floor at 1)
+      - **Error paths:** Context cancelled, HTTP 404, malformed JSON
+      - **Retry:** 429 succeeds on retry, exhausted retries, 5xx succeeds, context cancelled during backoff, non-retryable status
+  - **`ddg`** (`internal/engine/ddg/`):
+    - `ddg.go` — DuckDuckGo HTML scrape engine
+      - HTTP GET to `https://html.duckduckgo.com/html/?q=<q>`
+      - goquery HTML parsing with selectors per DDG lite template:
+        - container: `div.result`
+        - url: `a.result__a/@href`
+        - title: `h2.result__title`
+        - snippet: `.result__snippet`
+      - `Enabled: false` by default (§17.3) — opt-in via `--engine ddg`
+      - Retry via shared `internal/engine/retry` package
+    - `ddg_test.go` — 13 tests:
+      - **Descriptor:** Name/keyed/weight/enabled (false)
+      - **Golden-table parse:** Normal (2 results), empty, no-results-standard
+      - **httptest round-trip:** Verifies headers, parses fixture HTML into `[]Result`
+      - **buildRequestURL:** 2 cases (normal, spaces)
+      - **Error paths:** Context cancelled, HTTP 404
+      - **Retry:** 429/5xx succeed on retry, exhausted, context cancelled during backoff, non-retryable
+  - **E2E tests** in `cmd/mst/main_test.go`:
+    - `TestRun_Wikipedia_E2E` — full pipeline with httptest server
+    - `TestRun_DDG_E2E` — full pipeline with httptest server (explicit `--engine ddg`)
+    - `TestRun_DDG_OffByDefault` — verifies ddg is disabled by default, enabled with `--engine`
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **217 tests green** (was 168, +49)
+  - `/tmp/mst --list-engines` → shows `brave`, `mojeek`, `wikipedia`, `ddg`
+- **Blocked on:** nothing
+- **Next:** Sprint A.2.2 — hardening
 
 <!--
 Entry template:

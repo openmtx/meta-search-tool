@@ -91,8 +91,24 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
   `--list-engines` shows `mojeek`; 147 tests green (-race).
 
 ### Stage 2 — v0.1 completion + hardening  [→ v0.1]
-#### Sprint A.2.1 — finish v0.1 engine set: `wikipedia` (Tier B) + `ddg` (Tier C, off by default) (§16)
-- **DoD:** `wikipedia` + `ddg` each have fixture tests; `ddg.enabled` defaults false; a keyless-only run (`mst "<q>"`) returns merged results.
+#### Sprint A.2.1 — finish v0.1 engine set: `wikipedia` (Tier B) + `ddg` (Tier C, off by default)   ▶ complete
+- [x] `internal/engine/wikipedia/wikipedia.go` — Wikipedia OpenSearch API client: HTTP GET to
+  `en.wikipedia.org/w/api.php`, parses JSON response `[query, [titles], [descriptions], [urls]]`
+  into `[]engine.Result`
+- [x] `internal/engine/wikipedia/wikipedia_test.go` — 16 tests: descriptor, golden-table parse (5),
+  httptest round-trip, buildRequestURL (3 cases), context cancellation, HTTP error,
+  malformed response, retry (429 succeeds, exhausted, 5xx succeeds, context cancelled during backoff,
+  non-retryable status)
+- [x] `internal/engine/ddg/ddg.go` — DuckDuckGo HTML scrape engine: HTTP GET to
+  `html.duckduckgo.com/html/?q=<q>`, goquery HTML parsing, selectors per DDG lite template:
+  container `div.result`, url `a.result__a/@href`, title `h2.result__title`, snippet `.result__snippet`
+- [x] `internal/engine/ddg/ddg_test.go` — 13 tests: descriptor (enabled=false), golden-table parse (3),
+  httptest round-trip, buildRequestURL (2 cases), context cancellation, HTTP error,
+  retry (429/5xx succeed on retry, exhausted, context cancelled during backoff, non-retryable)
+- [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- [x] E2E tests: `TestRun_Wikipedia_E2E`, `TestRun_DDG_E2E`, `TestRun_DDG_OffByDefault` in `cmd/mst/main_test.go`
+- **DoD:** ✅ Done: 217 tests green (-race). Wikipedia parses JSON OpenSearch API; ddg off by default
+  (explicit `--engine ddg` required); E2E pipeline tests for both engines.
 #### Sprint A.2.2 — hardening: tests (§14), `--list-engines`, exit/format polish
 - **DoD:** `go test ./...` green incl. fuzz/property tests for canonicalization + RRF; `--list-engines`, `--format text/table`, and exit codes verified; v0.1 is taggable.
 

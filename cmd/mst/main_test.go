@@ -13,6 +13,8 @@ import (
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
+	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 )
@@ -406,6 +408,127 @@ func TestRun_Brave_E2E(t *testing.T) {
 	// The engines block should show brave as ok.
 	if bs, ok := env.Engines["brave"]; !ok || !bs.OK {
 		t.Errorf("engines block: brave = %+v, want ok=true", env.Engines["brave"])
+	}
+}
+
+// TestRun_Wikipedia_E2E exercises the full pipeline with a real wikipedia engine
+// backed by an httptest server: dispatch → rank → format → exit code.
+func TestRun_Wikipedia_E2E(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Wikipedia OpenSearch API shape: [query, [titles], [descriptions], [urls]]
+		w.Write([]byte(`["test query",["Wikipedia Article"],["A description."],["https://en.wikipedia.org/wiki/Article"]]`))
+	}))
+	defer ts.Close()
+
+	origBase := wikipedia.APIBase()
+	wikipedia.SetAPIBase(ts.URL)
+	defer wikipedia.SetAPIBase(origBase)
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(wikipedia.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errs := runWith(t, []string{"-n", "5", "test query"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\n%s", err, out)
+	}
+	if env.Schema != 1 {
+		t.Errorf("schema = %d, want 1", env.Schema)
+	}
+	if len(env.Results) != 1 {
+		t.Fatalf("results = %d, want 1", len(env.Results))
+	}
+	if env.Results[0].Title != "Wikipedia Article" {
+		t.Errorf("top result title = %q, want Wikipedia Article", env.Results[0].Title)
+	}
+	if env.Results[0].URL != "https://en.wikipedia.org/wiki/Article" {
+		t.Errorf("top result url = %q, want https://en.wikipedia.org/wiki/Article", env.Results[0].URL)
+	}
+	if bs, ok := env.Engines["wikipedia"]; !ok || !bs.OK {
+		t.Errorf("engines block: wikipedia = %+v, want ok=true", env.Engines["wikipedia"])
+	}
+}
+
+// TestRun_DDG_E2E exercises the full pipeline with a real ddg engine
+// backed by an httptest server: dispatch → rank → format → exit code.
+func TestRun_DDG_E2E(t *testing.T) {
+	fixture := `<html><body>` +
+		`<div class="result">` +
+		`  <a class="result__a" href="https://example.com/ddg-result">` +
+		`    <h2 class="result__title">DDG Result</h2>` +
+		`    <p class="result__snippet">DuckDuckGo snippet.</p>` +
+		`  </a>` +
+		`</div>` +
+		`</body></html>`
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fixture))
+	}))
+	defer ts.Close()
+
+	origBase := ddg.ScrapeBase()
+	ddg.SetScrapeBase(ts.URL)
+	defer ddg.SetScrapeBase(origBase)
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(ddg.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	// ddg is off by default — must explicitly enable via --engine.
+	code, out, errs := runWith(t, []string{"-e", "ddg", "-n", "5", "test query"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\n%s", err, out)
+	}
+	if len(env.Results) != 1 {
+		t.Fatalf("results = %d, want 1", len(env.Results))
+	}
+	if env.Results[0].Title != "DDG Result" {
+		t.Errorf("top result title = %q, want DDG Result", env.Results[0].Title)
+	}
+	if bs, ok := env.Engines["ddg"]; !ok || !bs.OK {
+		t.Errorf("engines block: ddg = %+v, want ok=true", env.Engines["ddg"])
+	}
+}
+
+// TestRun_DDG_OffByDefault verifies ddg is disabled by default.
+func TestRun_DDG_OffByDefault(t *testing.T) {
+	// Use a fake engine that reports enabled=false (mimicking ddg's descriptor).
+	ddgFake := &fakeEngine{
+		name:    "ddg",
+		weight:  0.5,
+		enabled: false, // off by default
+		results: []engine.Result{r("D", "https://x/ddg")},
+	}
+	reg := newReg(ddgFake)
+	// Without --engine ddg, ddg should be auto-skipped (enabled=false).
+	code, out, _ := runWith(t, []string{"q"}, reg, "")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (ddg off by default, no results)", code)
+	}
+	if strings.Contains(out, "ddg") {
+		t.Errorf("ddg should not appear in output when off by default: %s", out)
+	}
+	// With --engine ddg, it should run.
+	code2, out2, _ := runWith(t, []string{"-e", "ddg", "q"}, reg, "")
+	if code2 != 0 {
+		t.Fatalf("exit = %d, want 0 (--engine ddg enables it)", code2)
+	}
+	if !strings.Contains(out2, "https://x/ddg") {
+		t.Errorf("ddg result should appear with --engine: %s", out2)
 	}
 }
 
