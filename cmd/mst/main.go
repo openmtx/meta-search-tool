@@ -18,7 +18,9 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
+	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
+	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 	"github.com/openmtx/meta-search-tool/internal/search"
@@ -41,6 +43,12 @@ func defaultRegistry() *engine.Registry {
 	}
 	if err := reg.Register(mojeek.New()); err != nil {
 		panic("mojeek: " + err.Error())
+	}
+	if err := reg.Register(wikipedia.New()); err != nil {
+		panic("wikipedia: " + err.Error())
+	}
+	if err := reg.Register(ddg.New()); err != nil {
+		panic("ddg: " + err.Error())
 	}
 	return reg
 }
