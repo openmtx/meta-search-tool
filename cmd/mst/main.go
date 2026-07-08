@@ -78,10 +78,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 		return 2
 	}
 
-	// --list-engines short-circuits before query resolution (full §4 output lands
-	// in A.2.2; this is a minimal placeholder).
+	// --list-engines short-circuits before query resolution: render the full §4
+	// listing (name/enabled/keyed/key_present/weight/status) respecting --format.
 	if flags.ListEngines {
-		listEnginesPlaceholder(stdout, reg)
+		if verr := validateListFormat(flags.Format); verr != nil {
+			emitError(stderr, format.ErrCodeUsage, verr.Error(), 2)
+			return 2
+		}
+		entries := computeListEntries(flags, cfg, reg)
+		out, err := format.MarshalListEngines(entries, flags.Format)
+		if err != nil {
+			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
+			return 2
+		}
+		stdout.Write(out)
 		return 0
 	}
 
@@ -213,17 +223,17 @@ func validateFormat(flags *cli.Flags) error {
 	return nil
 }
 
-// listEnginesPlaceholder is the minimal A.0.2 --list-engines output (full §4
-// output — name/enabled/keyed/key_present/weight/status per engine, respecting
-// --format — lands in A.2.2 hardening).
-func listEnginesPlaceholder(w io.Writer, reg *engine.Registry) {
-	names := reg.Names()
-	if len(names) == 0 {
-		fmt.Fprintln(w, "(no engines registered)")
-		return
-	}
-	for _, n := range names {
-		fmt.Fprintln(w, n)
+// validateListFormat checks --format for the --list-engines path (§4/§10):
+// json/jsonl/text are supported; table is v0.2 (exit 2); anything else is
+// unknown. (--raw/--no-merge do not apply to the engine listing and are ignored.)
+func validateListFormat(format string) error {
+	switch format {
+	case "json", "jsonl", "text":
+		return nil
+	case "table":
+		return fmt.Errorf("--format table is not yet implemented (planned for v0.2)")
+	default:
+		return fmt.Errorf("unknown --format %q (valid: json | jsonl | text)", format)
 	}
 }
 

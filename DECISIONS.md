@@ -195,3 +195,45 @@ Entry template:
   (§18 lists `ddg`/`mojeek` scrape viability under monitoring).
 - **Status:** proposed (risk recorded; no spec change yet — re-evaluate at the
   v0.2/`table` sprint or whenever `ddg` access is next touched).
+
+## 2026-07-08 — `--list-engines` full output + remaining v0.1-scope items
+
+- **Context:** Sprint A.2.2 ("hardening"). DECISIONS (e) deferred the full
+  `--list-engines` output (§4) to this sprint, and DECISIONS (c) assigns
+  `--no-merge`/`--raw` to "A.2.x (hardening)". §16 lists `--raw`, `--no-merge`,
+  and "skill-tier flag classification" as v0.1 scope. The A.2.2 DoD enumerates
+  "fuzz/property tests, `--list-engines`, `--format text/table`, exit codes" but
+  also says "v0.1 is taggable" — so the boundary of what blocks a v0.1 tag is
+  ambiguous.
+- **Decision (part 1 — `--list-engines`, implemented):**
+  - Output shape per §4: each entry is `name`, `enabled` (config/flag state),
+    `keyed`, `key_present` (a real bool for keyed engines, JSON `null` for
+    keyless), `weight` (effective, after config + flag merge), and `status` ∈
+    {`ready`,`disabled`,`missing-key`}. Renders via `format.MarshalListEngines`
+    (json array / jsonl one-per-line / text aligned table; `table` → exit 2 as
+    v0.2). `--list-engines` short-circuits before query resolution and exits 0.
+  - State resolution is shared with `resolvePlan` via a new `computeStates`
+    (resolve.go), so precedence (§6) and engine selection (--engine/--exclude)
+    are identical to a normal run.
+  - `--list-engines` performs **no** engine-name validation (unknown names in
+    `--engine`/`--exclude` do not cause exit 2). Rationale: §4 says it "exits 0
+    without searching" — it is an introspection command and should not hard-fail
+    on a typo; the run-time `--engine`/`--exclude`/`--require` exit-2 validation
+    still guards actual searches.
+- **Question (part 2 — remaining v0.1 items, OPEN):** `--no-merge` (§10),
+  `--raw` (§10), and §4's "`--help` groups flags by these tiers" are v0.1-scope
+  per §16/§4 but are each non-trivial and not in A.2.2's literal DoD:
+    - `--no-merge`: tractable (skip ranking; emit per-engine native-order groups
+      with an `engine` field, no score/rank). Medium effort, no engine changes.
+    - `--raw`: needs engines to expose their pre-`Result` native payload — an
+      `Engine` interface change touching all 4 engines + their tests. Large.
+    - `--help` tier grouping: custom pflag usage rendering. Small-medium.
+  Should these land in A.2.2 (so v0.1 ships them), or should v0.1 tag with them
+  re-deferred (keeping their current exit-2 "not yet implemented" guards for
+  `--raw`/`--no-merge`) and tracked for a fast-follow?
+  **Recommendation:** do `--no-merge` + `--help` tier grouping now (clean,
+  in-scope, raise the bar for "taggable"), and re-defer `--raw` to its own
+  sprint since it requires the Engine-interface change and is a tier-3 debug
+  mode with low v0.1 ROI.
+- **Status:** part 1 accepted (implemented; no spec change needed — conforms to
+  §4). Part 2 proposed (awaiting decision).

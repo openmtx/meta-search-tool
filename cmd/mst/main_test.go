@@ -351,6 +351,153 @@ func TestRun_RawNoMergeTableDeferred(t *testing.T) {
 	}
 }
 
+// === --list-engines (§4) ====================================================
+
+// listReg builds a registry that exercises every status: brave (keyed, no key →
+// missing-key), mojeek (keyless → ready), ddg (disabled by default).
+func listReg() *engine.Registry {
+	return newReg(
+		&fakeEngine{name: "brave", weight: 2.0, enabled: true, keyed: true, keyEnv: "BRAVE_API_KEY"},
+		&fakeEngine{name: "mojeek", weight: 1.3, enabled: true},
+		&fakeEngine{name: "ddg", weight: 0.5, enabled: false},
+	)
+}
+
+func findEntry(t *testing.T, entries []format.ListEngine, name string) format.ListEngine {
+	t.Helper()
+	for _, e := range entries {
+		if e.Name == name {
+			return e
+		}
+	}
+	t.Fatalf("no --list-engines entry named %q in %+v", name, entries)
+	return format.ListEngine{}
+}
+
+func TestRun_ListEngines_JSON(t *testing.T) {
+	code, out, errs := runWith(t, []string{"--list-engines"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+	var entries []format.ListEngine
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("--list-engines stdout not a JSON array: %v\n%s", err, out)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
+	}
+	brave := findEntry(t, entries, "brave")
+	if !brave.Keyed || brave.KeyPresent == nil || *brave.KeyPresent {
+		t.Errorf("brave = %+v, want keyed/key_present=false", brave)
+	}
+	if brave.Status != "missing-key" || brave.Weight != 2.0 || !brave.Enabled {
+		t.Errorf("brave = %+v, want enabled/weight=2/missing-key", brave)
+	}
+	mojeek := findEntry(t, entries, "mojeek")
+	if mojeek.Keyed || mojeek.KeyPresent != nil {
+		t.Errorf("mojeek = %+v, want keyless (key_present=null)", mojeek)
+	}
+	if mojeek.Status != "ready" || mojeek.Weight != 1.3 {
+		t.Errorf("mojeek = %+v, want ready/weight=1.3", mojeek)
+	}
+	ddg := findEntry(t, entries, "ddg")
+	if ddg.Status != "disabled" || ddg.Enabled {
+		t.Errorf("ddg = %+v, want disabled", ddg)
+	}
+	// keyless key_present serializes as JSON null.
+	if !strings.Contains(out, `"key_present":null`) {
+		t.Errorf("keyless key_present must be null, got %s", out)
+	}
+}
+
+// TestRun_ListEngines_KeyPresent: with the key env var set, a keyed engine's
+// status becomes ready and key_present becomes true.
+func TestRun_ListEngines_KeyPresent(t *testing.T) {
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	code, out, _ := runWith(t, []string{"--list-engines"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var entries []format.ListEngine
+	json.Unmarshal([]byte(out), &entries)
+	brave := findEntry(t, entries, "brave")
+	if brave.Status != "ready" || brave.KeyPresent == nil || !*brave.KeyPresent {
+		t.Errorf("brave with key = %+v, want ready/key_present=true", brave)
+	}
+}
+
+func TestRun_ListEngines_JSONL(t *testing.T) {
+	code, out, _ := runWith(t, []string{"--list-engines", "-f", "jsonl"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("jsonl: %d lines, want 3 (one engine per line)", len(lines))
+	}
+	for i, l := range lines {
+		var e format.ListEngine
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			t.Errorf("jsonl line %d not an engine object: %v: %s", i, err, l)
+		}
+	}
+}
+
+func TestRun_ListEngines_Text(t *testing.T) {
+	code, out, _ := runWith(t, []string{"--list-engines", "-f", "text"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	for _, want := range []string{"NAME", "brave", "missing-key", "mojeek", "ready", "ddg", "disabled", "keyless"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text list missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRun_ListEngines_TableDeferred(t *testing.T) {
+	code, out, errs := runWith(t, []string{"--list-engines", "-f", "table"}, listReg(), "")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (table is v0.2)", code)
+	}
+	if out != "" {
+		t.Errorf("stdout must be empty on exit 2, got %q", out)
+	}
+	if !strings.Contains(errs, "table") || !strings.Contains(errs, "v0.2") {
+		t.Errorf("expected table/v0.2 message, got %s", errs)
+	}
+}
+
+// TestRun_ListEngines_WeightFlagReflected: --weight overrides the displayed
+// effective weight (§4: "weight (effective, after config + flag merge)").
+func TestRun_ListEngines_WeightFlagReflected(t *testing.T) {
+	code, out, _ := runWith(t, []string{"--list-engines", "--weight", "brave=5.5"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var entries []format.ListEngine
+	json.Unmarshal([]byte(out), &entries)
+	if brave := findEntry(t, entries, "brave"); brave.Weight != 5.5 {
+		t.Errorf("--weight brave=5.5 not reflected: brave.Weight = %v", brave.Weight)
+	}
+	// Other engines keep their default weight (not a full reset — §4).
+	if m := findEntry(t, entries, "mojeek"); m.Weight != 1.3 {
+		t.Errorf("mojeek weight changed to %v, want 1.3 (no reset)", m.Weight)
+	}
+}
+
+// TestRun_ListEngines_ExitsWithoutQuery: --list-engines short-circuits before
+// query resolution, so it works with no positional query at all.
+func TestRun_ListEngines_ExitsWithoutQuery(t *testing.T) {
+	code, out, errs := runWith(t, []string{"--list-engines"}, listReg(), "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (no query needed); stderr=%s", code, errs)
+	}
+	if !strings.Contains(out, "brave") {
+		t.Errorf("expected listing output, got %s", out)
+	}
+}
+
 // === Brave engine integration (httptest) ====================================
 
 // TestRun_Brave_E2E exercises the full pipeline with a real brave engine

@@ -5,14 +5,65 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier A, Stage 2 → Sprint A.2.1 (`wikipedia` + `ddg`) + review follow-up complete → next is A.2.2 hardening
-- **Last:** 2026-07-08 — A.2.1 review follow-up: P2 fixes (fastRetry hook on ddg/wikipedia; wikipedia malformed-payload error surfacing) + DDG-fidelity risk logged (DECISIONS.md). 206 tests green (-race); suite ~12s→3.4s
-- **Next:** Stage 2 — Sprint A.2.2 hardening: fuzz/property tests, `--list-engines`, exit/format polish → v0.1
-- **Last:** 2026-07-07 — Sprint A.1.1 follow-up: retry logic (§11) added to
-  brave engine; +6 new tests, 129 total green (-race)
-- **Next:** Stage 1 — Sprint A.1.2 `mojeek` (keyless HTML scrape)
+- **Active:** Tier A, Stage 2 → Sprint A.2.2 (hardening) — fuzz/property tests +
+  `--list-engines` done; `--no-merge`/`--raw`/`--help`-grouping scope decision OPEN
+- **Last:** 2026-07-08 — A.2.2 partial: fuzz/property tests for canonicalization +
+  RRF (§14) + full `--list-engines` output (§4). 241 tests green (-race).
+- **Next:** decide the remaining v0.1-scope items (DECISIONS 2026-07-08 part 2);
+  implement `--no-merge` + `--help` tier grouping (recommended) or close A.2.2
+  and tag v0.1.
+- **Last:** 2026-07-08 — A.2.1 review follow-up: P2 fixes (fastRetry hook on
+  ddg/wikipedia; wikipedia malformed-payload error surfacing) + DDG-fidelity
+  risk logged (DECISIONS.md). 206 tests green (-race); suite ~12s→3.4s
+- **Next:** Stage 2 — Sprint A.2.2 hardening: fuzz/property tests, `--list-engines`,
+  exit/format polish → v0.1
 
 ## Log
+
+## 2026-07-08 — Sprint A.2.2 (partial): fuzz/property tests + `--list-engines`
+
+Implemented the two unambiguous A.2.2 DoD items; surfaced the remaining
+v0.1-scope items as an open decision rather than silently expanding/dropping.
+
+- **Done:**
+  - **§14 fuzz/property tests** (`internal/rank/fuzz_test.go`,
+    `property_test.go`):
+    - `FuzzCanonicalize` — seeds §9 equivalence classes + malformed inputs;
+      asserts no-panic, idempotency, fragment-free. Idempotency scoped to
+      realistic engine URLs (http/https, simple hostname, ≤1 leading www);
+      degenerate inputs (colon hosts, non-http schemes, multi-www) assert
+      determinism only, matching Canonicalize's best-effort fallback contract.
+      Verified: 60s / 4.4M execs / 0 failures. The fuzz run surfaced 3 real
+      pathological non-idempotent inputs (`"//0 "`, `"A0000://:?A"`,
+      `"//://0"`) — characterized + excluded by scope.
+    - Property tests (deterministic-seeded): run-reordering determinism
+      (60×8), single-engine score monotonicity (+ exact w/(r+k)),
+      dedup-sums-contributions, all-scores-positive.
+  - **§4 `--list-engines` full output** (replaces A.0.2 placeholder):
+    - `format.ListEngine` + `format.MarshalListEngines` (json/jsonl/text;
+      nil→`[]`; table→error).
+    - `resolve.computeStates` extracted from `resolvePlan` — shared state
+      resolution (§4 selection + §6 precedence); `resolve.computeListEntries`
+      maps states → `ListEngine` (`key_present` null for keyless).
+    - `main.run` wires `--list-engines` before query resolution (exit 0);
+      `validateListFormat` (table→exit 2).
+    - Tests: 7 in `cmd/mst` (JSON fields/status/key_present-null, key-present
+      flip, jsonl, text, table→exit2, `--weight` reflected, no-query-needed) +
+      6 in `format` (json/jsonl/text/empty/table-reject/nil).
+- **Verified:** `gofmt -l .` empty; `go vet ./...` clean; `go build ./...` ok;
+  `go test -race -count=1 ./...` → 12 packages, **241 tests green** (was 206,
+  +35: +22 rank fuzz/property, +13 list-engines). Binary smoke: `--list-engines`
+  json/jsonl/text all match §4; `BRAVE_API_KEY` flips brave missing-key→ready;
+  `-f table` → exit 2.
+- **Files changed:** `internal/rank/fuzz_test.go` (new),
+  `internal/rank/property_test.go` (new), `internal/format/format.go`,
+  `internal/format/format_test.go`, `cmd/mst/main.go`, `cmd/mst/main_test.go`,
+  `cmd/mst/resolve.go`, `TASKS.md`, `DECISIONS.md`.
+- **Blocked on:** decision on remaining v0.1 items (`--no-merge`/`--raw`/
+  `--help` tier grouping) — see DECISIONS 2026-07-08 part 2.
+- **Next:** per the decision — implement `--no-merge` + `--help` grouping
+  (recommended) then close A.2.2 and tag v0.1; or close A.2.2 now with
+  `--raw`/`--no-merge` re-deferred.
 
 ## 2026-07-08 — Sprint A.2.1 review follow-up (P2 fixes + DDG risk)
 

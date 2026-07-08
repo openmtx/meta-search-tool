@@ -110,7 +110,25 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 - **DoD:** ✅ Done: 217 tests green (-race). Wikipedia parses JSON OpenSearch API; ddg off by default
   (explicit `--engine ddg` required); E2E pipeline tests for both engines.
 #### Sprint A.2.2 — hardening: tests (§14), `--list-engines`, exit/format polish
+- [x] Fuzz/property tests for canonicalization + RRF (§14): `FuzzCanonicalize`
+  (idempotency/fragment-free/no-panic; 60s/4.4M-exec run clean) + property tests
+  (run-reordering determinism, single-engine score monotonicity, dedup-sums,
+  all-scores-positive) in `internal/rank/`
+- [x] `--list-engines` full §4 output — `name`/`enabled`/`keyed`/`key_present`
+  (bool or `null`)/`weight`/`status`, respecting `--format` (json/jsonl/text;
+  table → exit 2). Replaces the A.0.2 placeholder. State resolution shared with
+  `resolvePlan` via new `computeStates`.
+- [x] `--format text` (results) verified; `--format table` → exit 2 (v0.2);
+  exit codes 0/1/2/3 verified (existing suite).
+- [ ] **OPEN (v0.1-tagging boundary):** `--no-merge` + `--raw` (§10; DECISIONS c
+  assigns to A.2.x) and §4 `--help` tier grouping are v0.1-scope per §16 but
+  not in this sprint's literal DoD and each is non-trivial (`--raw` needs an
+  Engine-interface change to expose raw payloads). Decision pending — see
+  DECISIONS.md (2026-07-08).
 - **DoD:** `go test ./...` green incl. fuzz/property tests for canonicalization + RRF; `--list-engines`, `--format text/table`, and exit codes verified; v0.1 is taggable.
+  - ✅ Partial (2026-07-08): fuzz/property + `--list-engines` + text/table/exit
+    verification done; 241 tests green (-race). Remaining v0.1 items
+    (`--no-merge`/`--raw`/`--help` grouping) pending scope decision.
 
 ---
 
