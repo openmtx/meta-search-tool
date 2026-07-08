@@ -4,19 +4,20 @@
 // fields, making parsing reliable and block-resistant. It requires a
 // BRAVE_API_KEY environment variable; without it, the engine auto-skips
 // (StatusMissingKey) via the registry's key-check in resolvePlan.
+//
+// The HTTP retry/backoff policy (§11) is shared via internal/engine/retry.
 package brave
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
+	"github.com/openmtx/meta-search-tool/internal/engine/retry"
 )
 
 // apiBase is the Brave Search API endpoint. Tests override it via SetAPIBase.
@@ -57,6 +58,10 @@ func (*brave) Descriptor() engine.EngineInfo {
 // API and parses the response into []engine.Result. On any error (HTTP status
 // >= 400, parse failure, context cancellation) it returns nil results and a
 // non-nil error. The dispatcher wraps this into EngineRun with timing metadata.
+//
+// Retry policy (§11): delegated to internal/engine/retry — up to 2 retries on
+// HTTP 429/5xx and network errors, exponential backoff (base 500ms, factor 2),
+// ±20% jitter, honoring Retry-After.
 func (*brave) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
 	apiKey := os.Getenv("BRAVE_API_KEY")
 	if apiKey == "" {
@@ -68,30 +73,28 @@ func (*brave) Search(ctx context.Context, q string, opts engine.Options) ([]engi
 		return nil, fmt.Errorf("brave: build request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("brave: request: %w", err)
+	// newReq builds a fresh request per retry attempt (headers are constant).
+	newReq := func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Accept", "application/json")
+		httpReq.Header.Set("X-Subscription-Token", apiKey)
+		httpReq.Header.Set("User-Agent", userAgent)
+		return httpReq, nil
 	}
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("X-Subscription-Token", apiKey)
-	httpReq.Header.Set("User-Agent", userAgent)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := retry.Do(ctx, "brave", newReq)
 	if err != nil {
-		return nil, fmt.Errorf("brave: request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("brave: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return nil, fmt.Errorf("brave: decode response: %w", err)
 	}
-
 	return parseResults(apiResp), nil
 }
 

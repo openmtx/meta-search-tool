@@ -393,7 +393,12 @@ query ────▶ │  dispatcher │ ──┬─▶ engine A ─┐
   like a burst. This is a fixed internal default in v1 — no flag, no config field
   — and is a no-op while fewer than 8 engines are enabled.
 - A failing/timed-out engine returns `(nil, error)`; it does **not** abort the
-  run. Errors are surfaced in the output's `engines` block.
+  run. Errors are surfaced in the output's `engines` block. A *paginating*
+  engine that succeeds on some pages but fails on a later one returns its
+  accumulated results *plus* the error (partial results with error); the
+  ranker still fuses the partial set and the `engines` block reports
+  `ok: false` with the partial `count` and the error — strictly more useful
+  than discarding the pages already fetched.
 - Results from all engines flow into the **collector**, then the **ranker**.
 - The merged set is sorted, truncated to `--limit`, and serialized.
 
@@ -583,13 +588,20 @@ would need a different merge strategy and is deferred (§18).
 
 ## 11. Error Handling & Resilience
 
-- Engine HTTP calls: up to 2 retries on 429/5xx using exponential backoff
+- Engine HTTP calls: up to 2 retries on 429/5xx and network/DNS errors (the
+  latter treated identically to timeouts) using exponential backoff
   (base 500ms, factor 2) with ±20% jitter, honoring `Retry-After` when present.
-  The whole sequence — initial attempt + backoff sleeps + retries — runs inside
-  the engine's per-engine context (`--per-engine-timeout`); a deadline firing
-  mid-retry is reported as `timeout` and the run continues. `Retry-After` is
-  honored but capped at the remaining per-engine budget, so a server-requested
-  long wait can never push an engine past its own timeout. The default 6s fits
+  The retry loop is centralized in `internal/engine/retry` (§15) so every HTTP
+  engine shares one correct implementation rather than duplicating the loop
+  per engine. The whole sequence — initial attempt + backoff sleeps + retries
+  — runs inside the engine's per-engine context (`--per-engine-timeout`); a
+  deadline firing mid-retry is reported as `timeout` and the run continues.
+  `Retry-After` is honored as `max(Retry-After, calculated_backoff)` — we
+  never retry *faster* than the backoff strategy, but respect a
+  server-requested longer wait — and the wait is capped at the remaining
+  per-engine budget by the context deadline, so a server-requested long wait
+  can never push an engine past its own timeout. Non-retryable status codes
+  (400/401/403/404/…) return immediately without retry. The default 6s fits
   the full 2-retry sequence (~1.5s of sleeps + up to 3 round-trips) with
   margin; a tighter `--per-engine-timeout` may reduce the effective retry count
   (reported at `-v`).
@@ -647,6 +659,7 @@ meta-search-tool/
   internal/
     config/        # discovery, load, precedence merge
     engine/        # Engine interface + registry
+      retry/       # shared retry/backoff policy (§11) used by all HTTP engines
       ddg/
       wikipedia/
       brave/

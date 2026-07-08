@@ -107,3 +107,51 @@ Entry template:
   field normalizes `context.DeadlineExceeded` (and only that) to `"timeout"`; all
   other errors use `err.Error()` verbatim.
   **Status:** accepted (matches §11 wording).
+
+## 2026-07-08 — Centralized retry/backoff in `internal/engine/retry` (§11)
+
+- **Context:** Sprints A.1.1 (brave) and A.1.2 (mojeek) each carried a verbatim
+  copy of the same retry loop + helpers (`isRetryable`, `calcBackoff`,
+  `applyRetryAfter`, `retryable`, `sleepCtx`, `jitter`). The REVIEW.md follow-up
+  flagged this DRY violation (P2) and, on closer inspection during the refactor,
+  the duplicated loops contained three latent bugs: (a) a **double-sleep** — the
+  HTTP-error path called `retryable()` (which itself sleeps) and then `sleepCtx()`
+  again, so every HTTP-error retry slept twice (~3s per exhausted-retry test
+  instead of ~1.5s); (b) a **connection leak** — `defer resp.Body.Close()` inside
+  the pagination loop held N bodies open until `Search()` returned; (c) a wrong
+  `Retry-After` semantics — `min(Retry-After, backoff)` silently ignored the
+  server's requested wait whenever it exceeded the calculated backoff.
+- **Decision:** Extract a single `internal/engine/retry` package with a `Do(ctx,
+  engineName, newReq)` that encapsulates the whole retry loop (§11) and returns a
+  2xx response or an error. Every HTTP engine calls `retry.Do` instead of
+  inlining its own loop. Three behaviors are fixed in the move:
+  1. Single sleep per retry (the loop calls `Sleep` exactly once per attempt).
+  2. The successful response body is closed by the caller immediately after
+     parsing (no `defer` inside the loop).
+  3. `ApplyRetryAfter` uses `max(Retry-After, backoff)` — never retry faster than
+     the backoff, but honor a server-requested longer wait; the per-engine context
+     deadline is the real cap (§11).
+- **Rationale:** One correct, tested implementation shared by all engines; the
+  bugs were invisible precisely because they were duplicated. Centralizing also
+  makes the retry policy a single grep target for the spec-against-code check.
+- **Status:** accepted — folded into spec §11 (retry policy wording +
+  `internal/engine/retry` reference) and §15 (layout).
+
+## 2026-07-08 — Paginating engines return partial results on mid-pagination failure (§7)
+
+- **Context:** §7 stated "A failing/timed-out engine returns `(nil, error)`".
+  Mojeek paginates (up to 10 pages). If page N succeeds but page N+1 exhausts
+  retries, the A.1.2 code returned `(nil, error)`, discarding the pages already
+  fetched (REVIEW.md P1 bug). The ranker already fuses `run.Results` regardless of
+  `run.Err`, and the `engines` block reports `ok:false` with the partial `count` —
+  so partial results + error flow through the pipeline correctly.
+- **Decision:** A paginating engine that fails mid-way returns its accumulated
+  results *plus* the error: `(allResults, lastErr)`. Single-request engines still
+  return `(nil, error)` on failure. The dispatcher/ranker/format/exit-code path
+  already handles non-nil error with non-empty results (ranker fuses the partial
+  set; `engines` block shows `ok:false` + partial count; `--strict`/`--require`
+  still surface the failure as exit 3).
+- **Rationale:** Discarding fetched pages is strictly worse; the partial set is
+  real, ranked data and the failure is still transparently reported.
+- **Status:** accepted — folded into spec §7 (clarified the `(nil, error)`
+  contract for paginating engines).
