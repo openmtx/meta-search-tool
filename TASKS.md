@@ -78,8 +78,17 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 - **DoD:** ✅ Done (2026-07-07): 123 tests green (-race). httptest fixture parses
   brave payload → `[]Result`; auto-skip without key (exit 1); E2E pipeline test
   with real engine through full dispatch→rank→format path.
-#### Sprint A.1.2 — `mojeek` (keyless HTML scrape)
-- **DoD:** goquery fixture test parses mojeek HTML; keyless — `--list-engines` shows `ready`.
+#### Sprint A.1.2 — `mojeek` (keyless HTML scrape)   ▶ complete
+- [x] `internal/engine/mojeek/mojeek.go` — Mojeek scrape engine: HTTP GET to
+  `www.mojeek.com/search`, goquery HTML parsing, pagination (up to 10 pages),
+  retry logic (§11)
+- [x] `internal/engine/mojeek/mojeek_test.go` — 15 tests: golden-table parse,
+  httptest round-trip, descriptor, buildRequestURL, pagination, retry (429/5xx
+  succeed on retry, exhausted, context cancelled during backoff, non-retryable,
+  Retry-After honored)
+- [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **DoD:** ✅ Done: goquery fixture test parses mojeek HTML; keyless —
+  `--list-engines` shows `mojeek`; 147 tests green (-race).
 
 ### Stage 2 — v0.1 completion + hardening  [→ v0.1]
 #### Sprint A.2.1 — finish v0.1 engine set: `wikipedia` (Tier B) + `ddg` (Tier C, off by default) (§16)

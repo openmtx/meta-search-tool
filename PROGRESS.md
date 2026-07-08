@@ -5,9 +5,11 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier A, Stage 1, Sprint A.1.1 COMPLETE → next is A.1.2 (`mojeek`)
-- **Last:** 2026-07-07 — Sprint A.1.1 (brave engine) complete: 3 new files,
-  11 new tests, 123 total green (-race)
+- **Active:** Tier A, Stage 1 complete → next is Stage 2 (A.2.1)
+- **Last:** 2026-07-08 — REVIEW.md action items implemented (shared retry pkg)
+- **Next:** Stage 2 — Sprint A.2.1 `wikipedia` + `ddg`
+- **Last:** 2026-07-07 — Sprint A.1.1 follow-up: retry logic (§11) added to
+  brave engine; +6 new tests, 129 total green (-race)
 - **Next:** Stage 1 — Sprint A.1.2 `mojeek` (keyless HTML scrape)
 
 ## Log
@@ -22,6 +24,125 @@ Entry template:
 - Blocked on: …
 - Next: …
 -->
+
+## 2026-07-08 — REVIEW.md follow-up: shared retry package + bug fixes
+
+Implemented all REVIEW.md action items (P1/P2/P3) plus 3 additional bugs found
+while extracting the retry loop. Full detail in REVIEW.md (Resolution section)
+and DECISIONS.md.
+
+- **Done:**
+  - **P2:** `internal/engine/retry/retry.go` — `Do(ctx, engineName, newReq)`
+    encapsulates the whole §11 retry loop; both engines call it. 19 tests.
+    Deduplication complete (grep confirms no leftover helpers in engines).
+  - **Bug (double-sleep, both engines):** HTTP-error path slept twice per
+    retry via `retryable()` + `sleepCtx()`. Fixed → single sleep. Brave test
+    pkg: ~10s → ~1s.
+  - **Bug (connection leak, mojeek):** `defer resp.Body.Close()` inside the
+    pagination loop held N bodies open. Fixed via `parseAndClose` (no defer in
+    loop).
+  - **Bug (Retry-After semantics, both engines):** `min(Retry-After, backoff)`
+    ignored the server's wait when it exceeded backoff. Fixed →
+    `max(Retry-After, backoff)` per spec §11 (context deadline is the real cap).
+  - **P1 (mojeek data loss):** mid-pagination failure now returns
+    `(allResults, lastErr)` (partial results + error) per updated §7.
+  - **P3:** no defer-in-loop; `retry.SetBackoffOverride`/`SetJitterSource`
+    exported; weak `TestSearch_Pagination` → 3 focused tests.
+  - **Spec updates:** §7 (partial-results contract), §11 (centralized retry +
+    Retry-After max() semantics + network-error retry + non-retryable
+    immediate return), §15 (`engine/retry/` in layout).
+- **Verified:** `go build`/`go vet` clean; `gofmt -l .` empty;
+  `go test -race -count=1 ./...` → **168 tests green** (was 147), 10 packages.
+- **Blocked on:** nothing.
+- **Next:** Sprint A.2.1 — `wikipedia` + `ddg`
+
+## 2026-07-08 — Sprint A.1.2 follow-up: review of A.1.1 + A.1.2 code
+
+Reviewed all source and test code from Sprints A.1.1 (`brave`) and A.1.2 (`mojeek`)
+against spec requirements (§5, §8, §11, §12). Findings documented in `REVIEW.md`.
+
+- **Findings:**
+  - Both engines are spec-compliant and thoroughly tested (green build + 147 tests)
+  - **Bug found:** mojeek multi-page data loss — if page N succeeds but page N+1
+    exhausts retries, `Search()` returns `nil, lastErr` discarding accumulated results
+  - **DRY concern:** retry helpers duplicated across both engines (6 functions each)
+  - Minor issues: `defer` inside retry for-loop, missing accessor functions for test hooks
+- **Verified:** `go build`, `go vet`, `gofmt -l .` all clean; `go test -race -count=1 ./...`
+  green (9 packages).
+- **Blocked on:** nothing — findings are logged, not blocking A.2.1.
+- **Next:** Sprint A.2.1 — `wikipedia` + `ddg`
+
+## 2026-07-08 — Sprint A.1.2 — `mojeek` (keyless HTML scrape)
+
+The second Tier A engine: keyless HTML scrape with goquery.
+
+- **Done:**
+  - `internal/engine/mojeek/mojeek.go` — Mojeek Search API client
+    - HTTP GET to `https://www.mojeek.com/search?q=<q>&safe=0`
+    - Pagination: up to 10 pages (`s` param, omit on page 1 to avoid rate-limit)
+    - goquery HTML parsing with selectors per spec §5:
+      - container: `ul.results-standard > li`
+      - url: `li > a.ob/@href`
+      - title: `li > h2` text
+      - snippet: `li > p.s` text
+    - Browser DOM quirk: `<a class="ob">` closes before `<h2>` (HTML nesting),
+      so selectors traverse from `li`, not from `a.ob`
+    - Retry policy (§11): up to 2 retries on HTTP 429/5xx, exponential backoff
+      (base 500ms, factor 2), ±20% jitter, honors Retry-After
+    - Test hooks: `backoffOverride`/`jitterSource` for deterministic tests
+  - `internal/engine/mojeek/mojeek_test.go` — 15 tests:
+    - **Golden-table:** `TestParseResults` (3 results), `TestParseResults_Empty`,
+      `TestParseResults_NoResultsStandard` — pure function, no I/O
+    - **httptest round-trip:** `TestSearch_Httptest` — verifies headers,
+      parses fixture HTML into `[]Result`
+    - **Error paths:** `TestSearch_ContextCancelled`, `TestSearch_HTTPError` (404)
+    - **Descriptor:** `TestDescriptor` — Name/Keyed=false/DefaultWeight=1.3/Enabled
+    - **buildRequestURL:** `TestBuildRequestURL` — 3 cases (page 0 no s, page 1 s=10, page 5 s=50)
+    - **Pagination:** `TestSearch_Pagination` — verifies multi-page fetching
+    - **Retry:** `TestSearch_Retry_429SucceedsOnRetry`,
+      `TestSearch_Retry_5xxSucceedsOnRetry`, `TestSearch_Retry_Exhausted`,
+      `TestSearch_Retry_ContextCancelledDuringBackoff`,
+      `TestSearch_Retry_NonRetryableStatus`, `TestSearch_Retry_RetryAfterHonored`
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+  - Added `github.com/PuerkitoBio/goquery` + `github.com/andybalholm/cascadia` deps
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race ./...` — 147 tests green (was 129, +18 mojeek tests)
+  - `/tmp/mst --list-engines` → `brave`, `mojeek`
+  - `/tmp/mst "go programming"` → exit 1 (403 from live site — expected for datacenter IPs)
+- **Blocked on:** nothing
+- **Next:** Sprint A.2.1 — `wikipedia` + `ddg`
+
+## 2026-07-07 — Sprint A.1.1 follow-up: retry logic (§11)
+
+Added per-engine retry policy to the brave Search() method.
+
+- **Done:**
+  - `internal/engine/brave/brave.go` — retry loop in `Search()`:
+    - Up to 2 retries on HTTP 429/5xx (exponential backoff: base 500ms, factor 2)
+    - ±20% jitter via `jitter()` function (configurable via `jitterSource` for tests)
+    - Honors `Retry-After` header when present (uses min of Retry-After and calculated backoff)
+    - Context cancellation during backoff sleep aborts the retry loop promptly
+    - Non-retryable status codes (400/401/403) return immediately without retry
+    - Network/DNS errors are also retried (treated identically to timeouts per §11)
+    - Test hooks: `backoffOverride` for deterministic backoff, `jitterSource` for deterministic jitter
+  - `internal/engine/brave/brave_test.go` — 6 new tests:
+    - `TestSearch_Retry_429SucceedsOnRetry` — transient 429 → retry → success (2 requests)
+    - `TestSearch_Retry_5xxSucceedsOnRetry` — transient 500 → retry → success
+    - `TestSearch_Retry_Exhausted` — persistent 429 → exhaust retries → error with 429 in message
+    - `TestSearch_Retry_ContextCancelledDuringBackoff` — cancel during backoff → returns promptly
+    - `TestSearch_Retry_NonRetryableStatus` — 401 returns immediately, no retry
+    - `TestSearch_Retry_RetryAfterHonored` — Retry-After header respected
+    - Updated `TestSearch_HTTPError` to verify 3 total requests (initial + 2 retries)
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race ./...` — 129 tests green (was 123, +6 retry tests)
+- **Blocked on:** nothing
+- **Next:** Sprint A.1.2 — `mojeek` (keyless HTML scrape)
 
 ## 2026-07-07 — Sprint A.1.1 — `brave` engine
 
