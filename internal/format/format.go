@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/rank"
@@ -133,6 +134,79 @@ func marshalText(results []rank.RankedResult) []byte {
 		}
 	}
 	return []byte(b.String())
+}
+
+// ListEngine is one row of the --list-engines output (§4): the fully-resolved
+// state of one registered engine, so an agent can programmatically select a
+// working engine set. Each entry reports name, enabled (config/flag state),
+// keyed, key_present (true/false for keyed engines, or null for keyless), the
+// effective weight (after config + flag merge), and status ∈
+// {ready, disabled, missing-key}. Discovery/precedence is identical to a normal
+// run (§6), computed by the caller (cmd/mst.computeListEntries).
+type ListEngine struct {
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	Keyed      bool    `json:"keyed"`
+	KeyPresent *bool   `json:"key_present"` // nil (→ null) for keyless engines
+	Weight     float64 `json:"weight"`
+	Status     string  `json:"status"`
+}
+
+// MarshalListEngines renders the --list-engines listing in the requested format
+// (§4): json → a compact array of entries; jsonl → one engine per line; text →
+// a human-readable aligned summary. table is v0.2 (rejected as an error so the
+// caller surfaces a clear exit-2). An empty registry serializes as `[]` (json)
+// / empty (jsonl) / a placeholder line (text), never JSON null.
+func MarshalListEngines(engines []ListEngine, format string) ([]byte, error) {
+	if engines == nil {
+		engines = []ListEngine{} // normalize so JSON is `[]`, never null
+	}
+	switch format {
+	case "json":
+		b, err := json.Marshal(engines)
+		if err != nil {
+			return nil, err
+		}
+		return append(b, '\n'), nil
+	case "jsonl":
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		for i := range engines {
+			if err := enc.Encode(&engines[i]); err != nil {
+				return nil, err
+			}
+		}
+		return buf.Bytes(), nil
+	case "text":
+		return marshalListText(engines), nil
+	default:
+		return nil, fmt.Errorf("unsupported format %q for --list-engines", format)
+	}
+}
+
+// marshalListText renders the §4 human-readable --list-engines summary with
+// aligned columns (tabwriter): NAME, ENABLED, KEYED, KEY, WEIGHT, STATUS.
+func marshalListText(engines []ListEngine) []byte {
+	if len(engines) == 0 {
+		return []byte("(no engines registered)\n")
+	}
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tENABLED\tKEYED\tKEY\tWEIGHT\tSTATUS")
+	for _, e := range engines {
+		key := "keyless"
+		if e.Keyed {
+			if e.KeyPresent != nil && *e.KeyPresent {
+				key = "present"
+			} else {
+				key = "absent"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%v\t%v\t%s\t%g\t%s\n", e.Name, e.Enabled, e.Keyed, key, e.Weight, e.Status)
+	}
+	tw.Flush()
+	return buf.Bytes()
 }
 
 // MarshalError renders the §11 structured stderr object for a non-zero exit.

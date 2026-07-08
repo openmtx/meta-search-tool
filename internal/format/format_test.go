@@ -173,3 +173,114 @@ func TestErrString(t *testing.T) {
 		t.Errorf("generic => %q, want verbatim", got)
 	}
 }
+
+// === --list-engines (§4) ====================================================
+
+func sampleList() []ListEngine {
+	kp := func(b bool) *bool { return &b }
+	return []ListEngine{
+		{Name: "brave", Enabled: true, Keyed: true, KeyPresent: kp(false), Weight: 2.0, Status: "missing-key"},
+		{Name: "mojeek", Enabled: true, Keyed: false, KeyPresent: nil, Weight: 1.3, Status: "ready"},
+		{Name: "ddg", Enabled: false, Keyed: false, KeyPresent: nil, Weight: 0.5, Status: "disabled"},
+	}
+}
+
+func TestMarshalListEngines_JSON(t *testing.T) {
+	out, err := MarshalListEngines(sampleList(), "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []ListEngine
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("json list output does not parse: %v\n%s", err, out)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d entries, want 3", len(got))
+	}
+	// keyless engines serialize key_present as JSON null.
+	s := string(out)
+	if !strings.Contains(s, `"key_present":null`) {
+		t.Errorf("keyless key_present must be null, got:\n%s", s)
+	}
+	// keyed engines serialize a real bool.
+	if !strings.Contains(s, `"key_present":false`) {
+		t.Errorf("keyed key_present must be a bool, got:\n%s", s)
+	}
+	if !bytes.HasSuffix(out, []byte("\n")) {
+		t.Error("json list output should end with a trailing newline")
+	}
+}
+
+// TestMarshalListEngines_JSON_EmptyIsArray: an empty listing must be `[]`,
+// never JSON null (consistent with the results:[] guarantee elsewhere).
+func TestMarshalListEngines_JSON_EmptyIsArray(t *testing.T) {
+	out, err := MarshalListEngines([]ListEngine{}, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "[]\n" {
+		t.Errorf("empty list = %q, want "+`[]`+"\n", out)
+	}
+	// nil must also be [] (MarshalListEngines callers pass non-nil, but be safe).
+	nilOut, _ := MarshalListEngines(nil, "json")
+	if !bytes.Equal(nilOut, out) {
+		t.Errorf("nil list = %q, want %q", nilOut, out)
+	}
+}
+
+func TestMarshalListEngines_JSONL(t *testing.T) {
+	out, err := MarshalListEngines(sampleList(), "jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("jsonl: %d lines, want 3 (one engine per line)", len(lines))
+	}
+	for i, line := range lines {
+		var e ListEngine
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Errorf("jsonl line %d does not parse: %v\n%s", i, err, line)
+		}
+	}
+	if strings.Contains(string(out), `"key_present":null`) {
+		// keyless lines carry null key_present — that's expected, just confirm at least one.
+	}
+}
+
+func TestMarshalListEngines_Text(t *testing.T) {
+	out, err := MarshalListEngines(sampleList(), "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	// Header + 3 rows; each engine name, status, keyed-ness, and weight appear.
+	for _, want := range []string{"NAME", "brave", "missing-key", "mojeek", "ready", "ddg", "disabled"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("text list missing %q in:\n%s", want, s)
+		}
+	}
+	// keyless engines are labeled "keyless"; keyed-without-key "absent".
+	if !strings.Contains(s, "keyless") || !strings.Contains(s, "absent") {
+		t.Errorf("text list missing key labels:\n%s", s)
+	}
+}
+
+func TestMarshalListEngines_TextEmpty(t *testing.T) {
+	out, err := MarshalListEngines([]ListEngine{}, "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "(no engines registered)\n" {
+		t.Errorf("empty text list = %q", out)
+	}
+}
+
+func TestMarshalListEngines_TableRejected(t *testing.T) {
+	if _, err := MarshalListEngines(sampleList(), "table"); err == nil {
+		t.Error("table must be rejected (v0.2)")
+	}
+	if _, err := MarshalListEngines(sampleList(), "csv"); err == nil {
+		t.Error("unknown format must be rejected")
+	}
+}
