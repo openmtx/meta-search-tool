@@ -73,13 +73,29 @@ func (*mojeek) Descriptor() engine.EngineInfo {
 // Retry policy (§11): each page request runs through internal/engine/retry —
 // up to 2 retries on HTTP 429/5xx and network errors, exponential backoff,
 // ±20% jitter, honoring Retry-After.
-func (*mojeek) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+func (m *mojeek) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+	results, _, err := m.fetch(ctx, q, opts)
+	return results, err
+}
+
+// SearchWithRaw implements engine.RawEngine (§10 --raw). For an HTML scrape
+// engine the native payload is the raw response body; since Mojeek paginates,
+// the payload is the slice of HTML bodies fetched (one per page) — partial on a
+// mid-pagination failure, mirroring the partial-results contract (§7).
+func (m *mojeek) SearchWithRaw(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
+	return m.fetch(ctx, q, opts)
+}
+
+// fetch is the shared Mojeek pagination core for Search and SearchWithRaw. It
+// returns the accumulated results plus the per-page HTML bodies (raw) for --raw.
+func (m *mojeek) fetch(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
 	var allResults []engine.Result
+	var pages []string
 
 	for page := 0; page < maxPages; page++ {
 		reqURL, err := buildRequestURL(q, page)
 		if err != nil {
-			return allResults, fmt.Errorf("mojeek: build request: %w", err)
+			return allResults, nonEmpty(pages), fmt.Errorf("mojeek: build request: %w", err)
 		}
 
 		// newReq builds a fresh request per retry attempt (headers are constant).
@@ -97,41 +113,54 @@ func (*mojeek) Search(ctx context.Context, q string, opts engine.Options) ([]eng
 		// error. On error we return the partial set already collected (§7).
 		resp, err := retry.Do(ctx, "mojeek", newReq)
 		if err != nil {
-			return allResults, err
+			return allResults, nonEmpty(pages), err
 		}
 
 		// Read + close the body immediately (no defer-in-loop → no leak across
 		// pages). goquery needs the full body in memory anyway.
-		results, perr := parseAndClose(resp)
+		body, perr := readAndClose(resp)
 		if perr != nil {
-			return allResults, perr
+			return allResults, nonEmpty(pages), perr
 		}
+		pages = append(pages, body)
 
+		results, perr := parseResults(body)
+		if perr != nil {
+			return allResults, nonEmpty(pages), perr
+		}
 		allResults = append(allResults, results...)
 
 		// Fewer than a full page → last page; stop paginating.
 		if len(results) < resultsPerPage {
-			return allResults, nil
+			return allResults, nonEmpty(pages), nil
 		}
 		// Reached the fetch limit → no need to fetch more pages.
 		if len(allResults) >= opts.Limit {
-			return allResults, nil
+			return allResults, nonEmpty(pages), nil
 		}
 	}
 
-	return allResults, nil
+	return allResults, nonEmpty(pages), nil
 }
 
-// parseAndClose reads the HTML body, closes it, and parses it into results. It
-// is split out of Search so the body is always closed exactly once, promptly
-// (never deferred across the pagination loop).
-func parseAndClose(resp *http.Response) ([]engine.Result, error) {
+// readAndClose reads the HTML body and closes it promptly (no defer-in-loop →
+// no leak across pagination pages).
+func readAndClose(resp *http.Response) (string, error) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("mojeek: read body: %w", err)
+		return "", fmt.Errorf("mojeek: read body: %w", err)
 	}
-	return parseResults(string(body))
+	return string(body), nil
+}
+
+// nonEmpty returns s, or nil if empty, so an unused --raw entry is omitted
+// rather than serialized as `null`.
+func nonEmpty(s []string) any {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
 }
 
 // buildRequestURL constructs the Mojeek search URL.

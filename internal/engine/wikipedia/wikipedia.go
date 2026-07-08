@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -66,10 +67,23 @@ func (*wikipedia) Descriptor() engine.EngineInfo {
 // Retry policy (§11): delegated to internal/engine/retry — up to 2 retries on
 // HTTP 429/5xx and network errors, exponential backoff (base 500ms, factor 2),
 // ±20% jitter, honoring Retry-After.
-func (*wikipedia) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+func (w *wikipedia) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+	results, _, err := w.fetch(ctx, q, opts)
+	return results, err
+}
+
+// SearchWithRaw implements engine.RawEngine (§10 --raw): like Search but also
+// returns the decoded native OpenSearch JSON ([query, [titles], [descs], [urls]])
+// so --raw shows exactly what Wikipedia returned before normalization.
+func (w *wikipedia) SearchWithRaw(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
+	return w.fetch(ctx, q, opts)
+}
+
+// fetch is the shared Wikipedia request+parse core for Search and SearchWithRaw.
+func (w *wikipedia) fetch(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
 	reqURL, err := buildRequestURL(q, opts.Limit)
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia: build request: %w", err)
+		return nil, nil, fmt.Errorf("wikipedia: build request: %w", err)
 	}
 
 	// newReq builds a fresh request per retry attempt (headers are constant).
@@ -85,15 +99,28 @@ func (*wikipedia) Search(ctx context.Context, q string, opts engine.Options) ([]
 
 	resp, err := retry.Do(ctx, "wikipedia", newReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	var apiResp apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("wikipedia: decode response: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wikipedia: read body: %w", err)
 	}
-	return parseResults(apiResp)
+
+	var apiResp apiResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, nil, fmt.Errorf("wikipedia: decode response: %w", err)
+	}
+	results, perr := parseResults(apiResp)
+	if perr != nil {
+		return nil, nil, perr
+	}
+
+	// Decode the native body generically for --raw (best-effort; nil on failure).
+	var raw any
+	_ = json.Unmarshal(body, &raw)
+	return results, raw, nil
 }
 
 // buildRequestURL constructs the Wikipedia OpenSearch API query URL with parameters.

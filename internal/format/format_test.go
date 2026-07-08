@@ -391,3 +391,61 @@ func TestMarshalUnmerged_TableRejected(t *testing.T) {
 		t.Error("table must be rejected (v0.2)")
 	}
 }
+
+// === --raw output (§10) =====================================================
+
+func TestBuildRawEnvelope(t *testing.T) {
+	runs := []engine.EngineRun{
+		{Engine: "brave", Results: []engine.Result{{URL: "https://a.example/1"}}, Raw: map[string]any{"web": "native"}},
+		{Engine: "ddg", Err: errors.New("upstream 500")}, // errored → no raw entry
+	}
+	env := BuildRawEnvelope("q", runs, 10, 5)
+	if _, ok := env.Raw["brave"]; !ok {
+		t.Error("brave raw payload missing")
+	}
+	if _, ok := env.Raw["ddg"]; ok {
+		t.Error("ddg must be absent from raw (errored, no payload)")
+	}
+	// engines metadata block still present, reflecting the failure.
+	if env.Engines["ddg"].OK || env.Engines["ddg"].Error == "" {
+		t.Errorf("ddg stat = %+v, want ok=false with error", env.Engines["ddg"])
+	}
+	// raw map is never nil → JSON `{}` when empty.
+	emptyEnv := BuildRawEnvelope("q", nil, 10, 1)
+	if emptyEnv.Raw == nil {
+		t.Error("Raw must be non-nil {} for empty runs")
+	}
+}
+
+func TestMarshalRaw(t *testing.T) {
+	runs := []engine.EngineRun{
+		{Engine: "brave", Results: []engine.Result{{URL: "https://a.example/1"}}, Raw: map[string]any{"web": map[string]any{"results": []any{1, 2}}}},
+	}
+	env := BuildRawEnvelope("rust", runs, 10, 99)
+	out, err := MarshalRaw(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got RawEnvelope
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("--raw json does not parse: %v\n%s", err, out)
+	}
+	// Inspect TOP-LEVEL keys (the native payload inside raw.brave legitimately
+	// contains its own "results" array, so a naive substring check would lie).
+	var top map[string]any
+	if err := json.Unmarshal(out, &top); err != nil {
+		t.Fatalf("parse top-level: %v", err)
+	}
+	for _, k := range []string{"schema", "query", "engines", "raw"} {
+		if _, ok := top[k]; !ok {
+			t.Errorf("--raw envelope missing top-level key %q:\n%s", k, out)
+		}
+	}
+	if _, ok := top["results"]; ok {
+		t.Errorf("--raw must not emit a top-level results field:\n%s", out)
+	}
+	if !bytes.HasSuffix(out, []byte("\n")) {
+		t.Error("--raw output should end with a trailing newline")
+	}
+	_ = got
+}

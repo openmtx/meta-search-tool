@@ -385,3 +385,39 @@ func TestSearch_Retry_NonRetryableStatus(t *testing.T) {
 		t.Errorf("attempts = %d, want 1 (no retry for 401)", attempts)
 	}
 }
+
+// TestSearchWithRaw verifies ddg implements engine.RawEngine and that the raw
+// payload is the response HTML body (the native payload for a scrape engine).
+func TestSearchWithRaw(t *testing.T) {
+	htmlBody := `<html><body>` +
+		`<div class="result"><a class="result__a" href="https://example.com/x">` +
+		`<h2 class="result__title">T</h2><p class="result__snippet">S</p></a></div>` +
+		`</body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(htmlBody))
+	}))
+	defer ts.Close()
+
+	origBase := ScrapeBase()
+	SetScrapeBase(ts.URL)
+	defer SetScrapeBase(origBase)
+
+	re, ok := New().(engine.RawEngine)
+	if !ok {
+		t.Fatal("ddg must implement engine.RawEngine")
+	}
+	results, raw, err := re.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWithRaw: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "T" {
+		t.Errorf("results = %+v, want 1 result Title=T", results)
+	}
+	body, ok := raw.(string)
+	if !ok {
+		t.Fatalf("raw payload = %T, want string (HTML body)", raw)
+	}
+	if !strings.Contains(body, `<div class="result">`) {
+		t.Errorf("raw HTML body does not contain the fixture markup: %q", body)
+	}
+}

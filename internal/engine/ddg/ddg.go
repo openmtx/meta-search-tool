@@ -65,10 +65,24 @@ func (*ddg) Descriptor() engine.EngineInfo {
 // Retry policy (§11): delegated to internal/engine/retry — up to 2 retries on
 // HTTP 429/5xx and network errors, exponential backoff (base 500ms, factor 2),
 // ±20% jitter, honoring Retry-After.
-func (*ddg) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+func (d *ddg) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+	results, _, err := d.fetch(ctx, q, opts)
+	return results, err
+}
+
+// SearchWithRaw implements engine.RawEngine (§10 --raw). For an HTML scrape
+// engine the native payload is the raw response body (the HTML has no JSON
+// field structure to preserve), so --raw shows exactly what DuckDuckGo returned
+// — useful for diagnosing selector/markup drift.
+func (d *ddg) SearchWithRaw(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
+	return d.fetch(ctx, q, opts)
+}
+
+// fetch is the shared DuckDuckGo request+parse core for Search and SearchWithRaw.
+func (d *ddg) fetch(ctx context.Context, q string, _ engine.Options) ([]engine.Result, any, error) {
 	reqURL, err := buildRequestURL(q)
 	if err != nil {
-		return nil, fmt.Errorf("ddg: build request: %w", err)
+		return nil, nil, fmt.Errorf("ddg: build request: %w", err)
 	}
 
 	// newReq builds a fresh request per retry attempt (headers are constant).
@@ -85,15 +99,19 @@ func (*ddg) Search(ctx context.Context, q string, opts engine.Options) ([]engine
 
 	resp, err := retry.Do(ctx, "ddg", newReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ddg: read body: %w", err)
+		return nil, nil, fmt.Errorf("ddg: read body: %w", err)
 	}
-	return parseResults(string(body))
+	results, perr := parseResults(string(body))
+	if perr != nil {
+		return nil, nil, perr
+	}
+	return results, string(body), nil
 }
 
 // buildRequestURL constructs the DuckDuckGo HTML search URL.

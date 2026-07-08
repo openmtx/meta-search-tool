@@ -319,6 +319,54 @@ func marshalUnmergedText(results []UnmergedResult) []byte {
 	return []byte(b.String())
 }
 
+// --- --raw output (§10) ----------------------------------------------------
+
+// RawEnvelope is the §10 --raw envelope: the metadata scaffolding plus a
+// `raw` map keyed by engine name, each value being that engine's parsed native
+// payload (shape varies per engine — intentionally unstructured). The `engines`
+// metadata block is still included (§10). There is no `results` field under
+// --raw (raw bypasses normalization entirely).
+type RawEnvelope struct {
+	Schema  int                   `json:"schema"`
+	Query   string                `json:"query"`
+	TookMs  int64                 `json:"took_ms"`
+	Limit   int                   `json:"limit"`
+	Engines map[string]EngineStat `json:"engines"`
+	Raw     map[string]any        `json:"raw"`
+}
+
+// BuildRawEnvelope assembles the §10 --raw envelope. The raw map includes an
+// entry for every run that produced a native payload (run.Raw != nil); engines
+// that errored or did not implement RawEngine are absent from `raw` (their
+// status is still visible in the `engines` block). The map is never nil so JSON
+// serializes as `{}`.
+func BuildRawEnvelope(query string, runs []engine.EngineRun, limit int, tookMs int64) *RawEnvelope {
+	raw := make(map[string]any)
+	for _, r := range runs {
+		if r.Raw != nil {
+			raw[r.Engine] = r.Raw
+		}
+	}
+	return &RawEnvelope{
+		Schema:  SchemaVersion,
+		Query:   query,
+		TookMs:  tookMs,
+		Limit:   limit,
+		Engines: buildEngineStats(runs),
+		Raw:     raw,
+	}
+}
+
+// MarshalRaw renders the §10 --raw envelope. --raw is JSON-only (§10); this is
+// the sole renderer.
+func MarshalRaw(env *RawEnvelope) ([]byte, error) {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
 // MarshalError renders the §11 structured stderr object for a non-zero exit.
 func MarshalError(code, message string, exit int) []byte {
 	b, err := json.Marshal(StructuredError{Error: ErrorBody{Code: code, Message: message, Exit: exit}})

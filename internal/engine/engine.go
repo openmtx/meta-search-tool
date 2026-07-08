@@ -49,14 +49,27 @@ type EngineInfo struct {
 // EngineRun is assembled by the dispatcher (internal/search), NOT by engines.
 // It carries the per-engine execution metadata surfaced in the output schema
 // (§10): which engine ran, its results in engine-native rank order, the error
-// (if it failed/timed out), and the wall-clock latency of the call. The ranker
-// (internal/rank, §9) consumes []EngineRun and produces its own aggregated
-// result type (rank, score, contributing engines[]).
+// (if it failed/timed out), and the wall-clock latency of the call. Raw holds
+// the engine's parsed native payload and is populated only under --raw (§10);
+// nil otherwise. The ranker (internal/rank, §9) consumes []EngineRun and
+// produces its own aggregated result type (rank, score, contributing engines[]).
 type EngineRun struct {
 	Engine  string
 	Results []Result // in engine-native rank order
 	Err     error
 	Latency time.Duration
+	Raw     any // parsed native payload (set only under --raw, §10); nil otherwise
+}
+
+// RawEngine is an Engine that can also expose its parsed native payload — the
+// pre-normalization structure with engine-native fields — for --raw (§10). The
+// dispatcher calls SearchWithRaw instead of Search only when collecting raw
+// payloads; engines that do not implement it yield no raw entry (their status
+// is still reported in the `engines` block). The payload shape varies per
+// engine and is intentionally unstructured (§10).
+type RawEngine interface {
+	Engine
+	SearchWithRaw(ctx context.Context, q string, opts Options) ([]Result, any, error)
 }
 
 // Status describes the operational state of a keyed engine.
