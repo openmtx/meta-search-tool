@@ -6,11 +6,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
+	"github.com/openmtx/meta-search-tool/internal/engine/retry"
 )
+
+// fastRetry makes the §11 backoff instant + deterministic for retry tests,
+// restoring the original hooks on cleanup. Without this the retry tests would
+// sleep the real exponential backoff (~1.5–3s each).
+func fastRetry(t *testing.T) {
+	t.Helper()
+	retry.SetBackoffOverride(func(int) time.Duration { return 0 })
+	retry.SetJitterSource(func(time.Duration) time.Duration { return 0 })
+}
 
 // --- Golden-table: parseResults -------------------------------------------
 
@@ -155,7 +166,9 @@ func TestSearch_ContextCancelled(t *testing.T) {
 }
 
 func TestSearch_HTTPError(t *testing.T) {
+	var count int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"errors":[{"message":"rate limit"}]}`))
 	}))
@@ -166,14 +179,19 @@ func TestSearch_HTTPError(t *testing.T) {
 	defer func() { apiBase = oldBase }()
 
 	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
 
 	e := New()
 	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
 	if err == nil {
-		t.Fatal("expected error on HTTP 429")
+		t.Fatal("expected error on HTTP 429 after retries")
 	}
 	if results != nil {
 		t.Errorf("expected nil results on error, got %d", len(results))
+	}
+	// Up to 2 retries = 3 total attempts (initial + 2 retries).
+	if count != 3 {
+		t.Errorf("HTTP request count = %d, want 3 (1 initial + 2 retries)", count)
 	}
 }
 
@@ -219,6 +237,215 @@ func TestDescriptor(t *testing.T) {
 	}
 	if !info.Enabled {
 		t.Error("Enabled should be true")
+	}
+}
+
+// --- Retry: HTTP 429/5xx backoff -------------------------------------------
+
+// TestSearch_Retry_429SucceedsOnRetry verifies that a transient 429 is retried
+// and eventually succeeds (first attempt 429, second succeeds).
+func TestSearch_Retry_429SucceedsOnRetry(t *testing.T) {
+	var count int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		if count == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiResponse{Web: webResponse{Results: []apiResult{{Title: "OK", URL: "https://ok.example/"}}}})
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("expected success after retry: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "OK" {
+		t.Errorf("unexpected results: %+v", results)
+	}
+	// Should have made 2 requests (initial 429 + successful retry).
+	if count != 2 {
+		t.Errorf("HTTP request count = %d, want 2", count)
+	}
+}
+
+// TestSearch_Retry_5xxSucceedsOnRetry verifies that a transient 500 is retried
+// and eventually succeeds.
+func TestSearch_Retry_5xxSucceedsOnRetry(t *testing.T) {
+	var count int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		if count == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiResponse{Web: webResponse{Results: []apiResult{{Title: "OK", URL: "https://ok.example/"}}}})
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("expected success after retry: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "OK" {
+		t.Errorf("unexpected results: %+v", results)
+	}
+	if count != 2 {
+		t.Errorf("HTTP request count = %d, want 2", count)
+	}
+}
+
+// TestSearch_Retry_Exhausted verifies that after exhausting retries on
+// persistent 429/5xx, the engine returns nil results + error.
+func TestSearch_Retry_Exhausted(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion")
+	}
+	if results != nil {
+		t.Errorf("expected nil results, got %d", len(results))
+	}
+	// Should contain the HTTP status in the error message.
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error should mention 429: %v", err)
+	}
+}
+
+// TestSearch_Retry_ContextCancelledDuringBackoff verifies that if the context
+// is cancelled during a backoff sleep, Search returns promptly with ctx.Err().
+func TestSearch_Retry_ContextCancelledDuringBackoff(t *testing.T) {
+	var count int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e := New()
+	done := make(chan struct{})
+	go func() {
+		e.Search(ctx, "q", engine.Options{Limit: 10})
+		close(done)
+	}()
+
+	// Let the first retry's backoff start, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// OK — Search returned promptly after cancel.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Search did not return after context cancel during backoff")
+	}
+	// Should have made at least 2 requests (initial + first retry before cancel).
+	if count < 2 {
+		t.Errorf("HTTP request count = %d, want >= 2", count)
+	}
+}
+
+// TestSearch_Retry_NonRetryableStatus verifies that non-retryable status codes
+// (e.g. 400, 401, 403) return immediately without retry.
+func TestSearch_Retry_NonRetryableStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"invalid token"}`))
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if err == nil {
+		t.Fatal("expected error on HTTP 401")
+	}
+	if results != nil {
+		t.Errorf("expected nil results, got %d", len(results))
+	}
+	// Should NOT have retried.
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error should mention 401: %v", err)
+	}
+}
+
+// TestSearch_Retry_RetryAfterHonored verifies that a Retry-After header does
+// not break the retry path (the header's max() semantics are unit-tested in
+// internal/engine/retry).
+func TestSearch_Retry_RetryAfterHonored(t *testing.T) {
+	var count int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		if count == 1 {
+			w.Header().Set("Retry-After", "0") // honored as max(0, backoff)
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiResponse{Web: webResponse{Results: []apiResult{{Title: "OK", URL: "https://ok.example/"}}}})
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+
+	t.Setenv("BRAVE_API_KEY", "test-key")
+	fastRetry(t)
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("expected success after retry: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "OK" {
+		t.Errorf("unexpected results: %+v", results)
+	}
+	if count != 2 {
+		t.Errorf("HTTP request count = %d, want 2", count)
 	}
 }
 
