@@ -112,10 +112,35 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 		return 2
 	}
 
-	// Dispatch under a global deadline (§7), then rank + window (§9).
+	// Dispatch under a global deadline (§7).
 	ctx, cancel := context.WithTimeout(context.Background(), p.globalTo)
 	defer cancel()
 
+	requireSet := setOf(flags.Require)
+
+	// --no-merge: skip ranking/dedup; emit per-engine native-order groups (§10).
+	// --offset/--limit are merged-window controls, so they are no-ops here; §4
+	// requires a -v notice when --offset is set under --no-merge.
+	if flags.NoMerge {
+		start := time.Now()
+		runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts)
+		tookMs := time.Since(start).Milliseconds()
+		if p.offset != 0 {
+			vlog(stderr, flags.Verbose, 1, "--offset is a no-op under --no-merge (results are not merged)")
+		}
+		env := format.BuildUnmergedEnvelope(query, runs, p.limit, tookMs)
+		exit := computeExit(len(env.Results), runs, requireSet, flags.Strict)
+		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
+		out, merr := format.MarshalUnmerged(env, flags.Format)
+		if merr != nil {
+			emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
+			return 2
+		}
+		stdout.Write(out)
+		return exit
+	}
+
+	// Merged path: dispatch → rank → window (§9).
 	start := time.Now()
 	runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts)
 	results := rank.Window(rank.Rank(runs, p.weights, p.regOrder, p.rrfK), p.offset, p.limit)
@@ -123,17 +148,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 
 	env := format.BuildEnvelope(query, runs, results, p.limit, tookMs)
 
-	exit := computeExit(results, runs, setOf(flags.Require), flags.Strict)
-	switch exit {
-	case 1:
-		msg := "no results"
-		if len(p.engines) == 0 {
-			msg = "no results: no ready engines (try --list-engines)"
-		}
-		emitError(stderr, format.ErrCodeNoResults, msg, 1)
-	case 3:
-		emitError(stderr, format.ErrCodeEngineFailure, engineFailureMessage(runs, flags.Require), 3)
-	}
+	exit := computeExit(len(results), runs, requireSet, flags.Strict)
+	emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
 
 	out, merr := format.Marshal(env, flags.Format)
 	if merr != nil {
@@ -144,20 +160,49 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	return exit
 }
 
-// computeExit returns the §4 exit code from the run outcome. Precedence (highest
-// first): 2 > 3 > 1 > 0. Exit 2 is decided upstream (before dispatch); this only
-// distinguishes 0 / 1 / 3. Exit 3 = a required engine ran but failed, OR --strict
-// with any engine failure; exit 3 beats exit 1 when both apply.
-func computeExit(results []rank.RankedResult, runs []engine.EngineRun, requireSet map[string]bool, strict bool) int {
+// computeExit returns the §4 exit code from the run outcome. Precedence
+// (highest first): 2 > 3 > 1 > 0. Exit 2 is decided upstream (before dispatch);
+// this only distinguishes 0 / 1 / 3. Exit 3 = a required engine ran but failed,
+// OR --strict with any engine failure; exit 3 beats exit 1 when both apply.
+// resultCount is the number of output items produced (merged results, unmerged
+// results, or raw payloads) — 0 ⇒ exit 1.
+func computeExit(resultCount int, runs []engine.EngineRun, requireSet map[string]bool, strict bool) int {
 	for _, r := range runs {
 		if r.Err != nil && (requireSet[r.Engine] || strict) {
 			return 3
 		}
 	}
-	if len(results) == 0 {
+	if resultCount == 0 {
 		return 1
 	}
 	return 0
+}
+
+// emitNonZeroError writes the §11 structured stderr object for a non-0/2 exit:
+// exit 1 = no results (special-cased when no engine was ready), exit 3 = an
+// engine failure. Exit 0 emits nothing. (Exit 2 is handled at the point of
+// failure, before any output.)
+func emitNonZeroError(stderr io.Writer, exit int, runs []engine.EngineRun, require []string, numEngines int) {
+	switch exit {
+	case 1:
+		msg := "no results"
+		if numEngines == 0 {
+			msg = "no results: no ready engines (try --list-engines)"
+		}
+		emitError(stderr, format.ErrCodeNoResults, msg, 1)
+	case 3:
+		emitError(stderr, format.ErrCodeEngineFailure, engineFailureMessage(runs, require), 3)
+	}
+}
+
+// vlog writes a -v diagnostic line to stderr when the verbose level is met
+// (§13: diagnostics go to stderr, never stdout). Minimal hook for the few spec
+// notices that require it (e.g. §4 --offset no-op under --no-merge); the fuller
+// -v logging (per-engine latency/score breakdown) remains deferred.
+func vlog(stderr io.Writer, verbose, level int, format string, a ...any) {
+	if verbose >= level {
+		fmt.Fprintf(stderr, "mst: "+format+"\n", a...)
+	}
 }
 
 // engineFailureMessage builds a human-readable message for the exit-3 structured
@@ -200,8 +245,9 @@ func resolveQuery(flags *cli.Flags, stdin io.Reader) (string, error) {
 }
 
 // validateFormat checks the --format value and the --raw / --no-merge modes
-// against what A.0.2 supports (§10), surfacing clear exit-2 errors for the
-// deferred cases rather than silently no-op'ing (decision 2026-07-07c/d).
+// (§10). --no-merge works with json/jsonl/text. --raw is JSON-only; combined
+// with text/table/jsonl it is a usage error (§10). --raw implies --no-merge, so
+// both being set is allowed (--raw wins). table is v0.2 in all modes.
 func validateFormat(flags *cli.Flags) error {
 	switch flags.Format {
 	case "json", "jsonl", "text":
@@ -215,10 +261,8 @@ func validateFormat(flags *cli.Flags) error {
 		return fmt.Errorf("--raw is only compatible with --format json, got %s", flags.Format)
 	}
 	if flags.Raw {
+		// --raw lands in the next A.2.2 commit (needs the Engine raw-payload hook).
 		return fmt.Errorf("--raw is not yet implemented (planned for A.2.x)")
-	}
-	if flags.NoMerge {
-		return fmt.Errorf("--no-merge is not yet implemented (planned for A.2.x)")
 	}
 	return nil
 }
