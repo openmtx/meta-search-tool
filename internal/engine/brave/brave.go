@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,15 +63,30 @@ func (*brave) Descriptor() engine.EngineInfo {
 // Retry policy (§11): delegated to internal/engine/retry — up to 2 retries on
 // HTTP 429/5xx and network errors, exponential backoff (base 500ms, factor 2),
 // ±20% jitter, honoring Retry-After.
-func (*brave) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+func (b *brave) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
+	results, _, err := b.fetch(ctx, q, opts)
+	return results, err
+}
+
+// SearchWithRaw implements engine.RawEngine (§10 --raw): like Search but also
+// returns the decoded native JSON response (all fields, not just those mst
+// maps) so --raw shows exactly what Brave returned before normalization.
+func (b *brave) SearchWithRaw(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
+	return b.fetch(ctx, q, opts)
+}
+
+// fetch is the shared Brave request+parse core for Search and SearchWithRaw. It
+// returns the normalized results plus the decoded native response (raw) for
+// --raw; raw is nil on any pre-parse error path.
+func (b *brave) fetch(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
 	apiKey := os.Getenv("BRAVE_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("brave: BRAVE_API_KEY not set")
+		return nil, nil, fmt.Errorf("brave: BRAVE_API_KEY not set")
 	}
 
 	reqURL, err := buildRequestURL(q, opts.Limit)
 	if err != nil {
-		return nil, fmt.Errorf("brave: build request: %w", err)
+		return nil, nil, fmt.Errorf("brave: build request: %w", err)
 	}
 
 	// newReq builds a fresh request per retry attempt (headers are constant).
@@ -87,15 +103,27 @@ func (*brave) Search(ctx context.Context, q string, opts engine.Options) ([]engi
 
 	resp, err := retry.Do(ctx, "brave", newReq)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	var apiResp apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("brave: decode response: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("brave: read body: %w", err)
 	}
-	return parseResults(apiResp), nil
+
+	var apiResp apiResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, nil, fmt.Errorf("brave: decode response: %w", err)
+	}
+
+	// Decode the native body generically for --raw (all fields, full fidelity).
+	// Best-effort: if it fails (it should not, since the typed decode succeeded),
+	// raw stays nil and --raw simply omits this engine.
+	var raw any
+	_ = json.Unmarshal(body, &raw)
+
+	return parseResults(apiResp), raw, nil
 }
 
 // buildRequestURL constructs the Brave Search API query URL with parameters.

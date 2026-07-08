@@ -38,8 +38,22 @@ const ConcurrencyCap = 8
 //
 // A failing/timed-out engine yields {Err: <error>, Results: nil}; it does not
 // abort the run. A panicking engine is recovered into an error so it cannot take
-// down the others.
+// down the others. EngineRun.Raw is left nil (use DispatchRaw for --raw, §10).
 func Dispatch(ctx context.Context, engines []engine.Engine, q string, fetchLimit int, timeouts map[string]time.Duration) []engine.EngineRun {
+	return dispatch(ctx, engines, q, fetchLimit, timeouts, false)
+}
+
+// DispatchRaw is like Dispatch but also collects each engine's parsed native
+// payload into EngineRun.Raw (for --raw, §10), by calling SearchWithRaw on
+// engines that implement engine.RawEngine. Engines that do not implement it
+// fall back to Search (Raw stays nil). Determinism/ordering guarantees are
+// identical to Dispatch.
+func DispatchRaw(ctx context.Context, engines []engine.Engine, q string, fetchLimit int, timeouts map[string]time.Duration) []engine.EngineRun {
+	return dispatch(ctx, engines, q, fetchLimit, timeouts, true)
+}
+
+// dispatch is the shared fan-out core for Dispatch and DispatchRaw.
+func dispatch(ctx context.Context, engines []engine.Engine, q string, fetchLimit int, timeouts map[string]time.Duration, collectRaw bool) []engine.EngineRun {
 	runs := make([]engine.EngineRun, len(engines))
 	if len(engines) == 0 {
 		return runs
@@ -53,7 +67,7 @@ func Dispatch(ctx context.Context, engines []engine.Engine, q string, fetchLimit
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runs[i] = runOne(ctx, sem, e, q, fetchLimit, timeouts[e.Name()])
+			runs[i] = runOne(ctx, sem, e, q, fetchLimit, timeouts[e.Name()], collectRaw)
 		}()
 	}
 	wg.Wait()
@@ -61,8 +75,9 @@ func Dispatch(ctx context.Context, engines []engine.Engine, q string, fetchLimit
 }
 
 // runOne executes a single engine call under the semaphore + per-engine timeout,
-// recovering panics, and returns its EngineRun.
-func runOne(ctx context.Context, sem chan struct{}, e engine.Engine, q string, fetchLimit int, timeout time.Duration) (run engine.EngineRun) {
+// recovering panics, and returns its EngineRun. When collectRaw is set it calls
+// SearchWithRaw on engines implementing RawEngine (populating run.Raw).
+func runOne(ctx context.Context, sem chan struct{}, e engine.Engine, q string, fetchLimit int, timeout time.Duration, collectRaw bool) (run engine.EngineRun) {
 	run.Engine = e.Name()
 
 	defer func() {
@@ -93,8 +108,17 @@ func runOne(ctx context.Context, sem chan struct{}, e engine.Engine, q string, f
 		defer cancel()
 	}
 
+	opts := engine.Options{Limit: fetchLimit}
 	start := time.Now()
-	results, err := e.Search(runCtx, q, engine.Options{Limit: fetchLimit})
+	if collectRaw {
+		if re, ok := e.(engine.RawEngine); ok {
+			results, raw, err := re.SearchWithRaw(runCtx, q, opts)
+			run.Results, run.Raw, run.Err, run.Latency = results, raw, err, time.Since(start)
+			return
+		}
+		// Engine does not expose a raw payload — fall back to Search (Raw stays nil).
+	}
+	results, err := e.Search(runCtx, q, opts)
 	run.Results, run.Err, run.Latency = results, err, time.Since(start)
 	return
 }

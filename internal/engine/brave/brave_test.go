@@ -479,3 +479,48 @@ func TestBuildRequestURL(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchWithRaw verifies brave implements engine.RawEngine and that the raw
+// payload is the decoded native JSON (full structure, not just mapped fields).
+func TestSearchWithRaw(t *testing.T) {
+	fixture := apiResponse{
+		Web: webResponse{Results: []apiResult{
+			{Title: "A", URL: "https://example.com/a", Snippet: "snippet A"},
+		}},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fixture)
+	}))
+	defer ts.Close()
+
+	oldBase := apiBase
+	apiBase = ts.URL + "/"
+	defer func() { apiBase = oldBase }()
+	t.Setenv("BRAVE_API_KEY", "test-key")
+
+	re, ok := New().(engine.RawEngine)
+	if !ok {
+		t.Fatal("brave must implement engine.RawEngine")
+	}
+	results, raw, err := re.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWithRaw: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "A" {
+		t.Errorf("results = %+v, want 1 result Title=A", results)
+	}
+	// raw is the decoded native JSON: { "web": { "results": [...] } }
+	m, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("raw payload = %T, want map[string]any", raw)
+	}
+	web, ok := m["web"].(map[string]any)
+	if !ok {
+		t.Fatalf("raw[web] = %T, want map[string]any", m["web"])
+	}
+	res, ok := web["results"].([]any)
+	if !ok || len(res) != 1 {
+		t.Errorf("raw web.results = %+v, want 1-element array", web["results"])
+	}
+}

@@ -118,6 +118,26 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 
 	requireSet := setOf(flags.Require)
 
+	// --raw: bypass normalization; emit each engine's parsed native payload
+	// keyed by engine name (§10). JSON-only (--raw + text/table/jsonl is exit 2,
+	// already rejected by validateFormat). --raw implies --no-merge, so this path
+	// takes precedence when both are set.
+	if flags.Raw {
+		start := time.Now()
+		runs := search.DispatchRaw(ctx, p.engines, query, p.fetchLimit, p.timeouts)
+		tookMs := time.Since(start).Milliseconds()
+		env := format.BuildRawEnvelope(query, runs, p.limit, tookMs)
+		exit := computeExit(rawPayloadCount(runs), runs, requireSet, flags.Strict)
+		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
+		out, merr := format.MarshalRaw(env)
+		if merr != nil {
+			emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
+			return 2
+		}
+		stdout.Write(out)
+		return exit
+	}
+
 	// --no-merge: skip ranking/dedup; emit per-engine native-order groups (§10).
 	// --offset/--limit are merged-window controls, so they are no-ops here; §4
 	// requires a -v notice when --offset is set under --no-merge.
@@ -205,6 +225,19 @@ func vlog(stderr io.Writer, verbose, level int, format string, a ...any) {
 	}
 }
 
+// rawPayloadCount returns the number of runs that produced a native payload
+// (run.Raw != nil) — the "result count" used for exit-code purposes under --raw
+// (§10): zero payloads ⇒ exit 1 (no results), subject to the usual exit-3 rule.
+func rawPayloadCount(runs []engine.EngineRun) int {
+	n := 0
+	for _, r := range runs {
+		if r.Raw != nil {
+			n++
+		}
+	}
+	return n
+}
+
 // engineFailureMessage builds a human-readable message for the exit-3 structured
 // error, distinguishing a required-engine failure from a --strict failure.
 func engineFailureMessage(runs []engine.EngineRun, require []string) string {
@@ -259,10 +292,6 @@ func validateFormat(flags *cli.Flags) error {
 	}
 	if flags.Raw && flags.Format != "json" {
 		return fmt.Errorf("--raw is only compatible with --format json, got %s", flags.Format)
-	}
-	if flags.Raw {
-		// --raw lands in the next A.2.2 commit (needs the Engine raw-payload hook).
-		return fmt.Errorf("--raw is not yet implemented (planned for A.2.x)")
 	}
 	return nil
 }

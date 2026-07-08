@@ -476,3 +476,37 @@ func TestSearch_Retry_NonRetryableStatus(t *testing.T) {
 		t.Errorf("attempts = %d, want 1 (no retry for 401)", attempts)
 	}
 }
+
+// TestSearchWithRaw verifies wikipedia implements engine.RawEngine and that the
+// raw payload is the decoded native OpenSearch array [query,[titles],[descs],[urls]].
+func TestSearchWithRaw(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`["some query",["Article Title"],["A description."],["https://en.wikipedia.org/wiki/Article"]]`))
+	}))
+	defer ts.Close()
+
+	origBase := apiBase
+	apiBase = ts.URL
+	defer func() { apiBase = origBase }()
+
+	re, ok := New().(engine.RawEngine)
+	if !ok {
+		t.Fatal("wikipedia must implement engine.RawEngine")
+	}
+	results, raw, err := re.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWithRaw: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "Article Title" {
+		t.Errorf("results = %+v, want 1 result", results)
+	}
+	// raw is the native [query,[titles],[descs],[urls]] array.
+	arr, ok := raw.([]any)
+	if !ok || len(arr) != 4 {
+		t.Fatalf("raw payload = %+v (%T), want 4-element array", raw, raw)
+	}
+	if titles, ok := arr[1].([]any); !ok || len(titles) != 1 {
+		t.Errorf("raw titles = %+v, want 1-element array", arr[1])
+	}
+}

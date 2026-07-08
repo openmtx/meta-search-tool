@@ -562,3 +562,40 @@ func TestSearch_Retry_RetryAfterHonored(t *testing.T) {
 		t.Errorf("HTTP request count = %d, want 2", count)
 	}
 }
+
+// TestSearchWithRaw verifies mojeek implements engine.RawEngine and that the raw
+// payload is the slice of HTML page bodies fetched (one per page). With a
+// <resultsPerPage fixture, pagination stops at page 1 → one body.
+func TestSearchWithRaw(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(mockHTML))
+	}))
+	defer ts.Close()
+
+	oldBase := scrapeBase
+	scrapeBase = ts.URL
+	defer func() { scrapeBase = oldBase }()
+
+	re, ok := New().(engine.RawEngine)
+	if !ok {
+		t.Fatal("mojeek must implement engine.RawEngine")
+	}
+	results, raw, err := re.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWithRaw: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	pages, ok := raw.([]string)
+	if !ok {
+		t.Fatalf("raw payload = %T, want []string (per-page HTML bodies)", raw)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("raw pages = %d, want 1 (fixture < resultsPerPage stops pagination)", len(pages))
+	}
+	if !strings.Contains(pages[0], `class="results-standard"`) {
+		t.Errorf("raw page body does not contain the fixture markup: %q", pages[0])
+	}
+}

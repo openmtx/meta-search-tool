@@ -331,24 +331,19 @@ func TestRun_VersionAndHelp(t *testing.T) {
 	}
 }
 
-func TestRun_RawNoMergeTableDeferred(t *testing.T) {
+func TestRun_TableDeferred(t *testing.T) {
 	reg := newReg(eng("a", r("t", "https://x/1")))
-	// --no-merge is now implemented (see TestRun_NoMerge_*); only --raw and
-	// -f table remain deferred → exit 2 with "not yet implemented".
-	for _, args := range [][]string{
-		{"--raw", "q"},
-		{"-f", "table", "q"},
-	} {
-		code, out, errs := runWith(t, args, reg, "")
-		if code != 2 {
-			t.Errorf("%v: exit=%d, want 2 (deferred mode must surface, not no-op)", args, code)
-		}
-		if out != "" {
-			t.Errorf("%v: stdout must be empty on exit 2, got %q", args, out)
-		}
-		if !strings.Contains(errs, "not yet implemented") {
-			t.Errorf("%v: expected 'not yet implemented' message, got %s", args, errs)
-		}
+	// -f table is the only still-deferred format → exit 2 "not yet implemented".
+	// (--raw and --no-merge are now implemented; see their dedicated tests.)
+	code, out, errs := runWith(t, []string{"-f", "table", "q"}, reg, "")
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2", code)
+	}
+	if out != "" {
+		t.Errorf("stdout must be empty on exit 2, got %q", out)
+	}
+	if !strings.Contains(errs, "not yet implemented") {
+		t.Errorf("expected 'not yet implemented' message, got %s", errs)
 	}
 }
 
@@ -439,6 +434,101 @@ func TestRun_NoMerge_OffsetIsNoOp(t *testing.T) {
 	json.Unmarshal([]byte(out), &env)
 	if len(env.Results) != 2 {
 		t.Errorf("--no-merge --offset 1 emitted %d results, want 2 (offset is a no-op)", len(env.Results))
+	}
+}
+
+// === --raw (§10) ===========================================================
+
+// TestRun_Raw_E2E: --raw emits the §10 raw envelope — metadata scaffolding plus
+// a `raw` map keyed by engine name — using a real brave engine (RawEngine) over
+// httptest.
+func TestRun_Raw_E2E(t *testing.T) {
+	fixture := map[string]any{
+		"web": map[string]any{"results": []map[string]any{
+			{"title": "Go", "url": "https://go.dev", "snippet": "Go language"},
+		}},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fixture)
+	}))
+	defer ts.Close()
+
+	origBase := brave.APIBase()
+	brave.SetAPIBase(ts.URL + "/")
+	defer brave.SetAPIBase(origBase)
+	t.Setenv("BRAVE_API_KEY", "test-key")
+
+	reg := engine.NewRegistry()
+	reg.Register(brave.New())
+
+	code, out, errs := runWith(t, []string{"--raw", "go"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errs)
+	}
+	var env format.RawEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("--raw stdout not valid JSON: %v\n%s", err, out)
+	}
+	if env.Schema != 1 {
+		t.Errorf("schema=%d, want 1", env.Schema)
+	}
+	// raw map keyed by engine name with the native payload.
+	if _, ok := env.Raw["brave"]; !ok {
+		t.Errorf("raw[brave] missing; raw=%+v", env.Raw)
+	}
+	// No top-level results field under --raw; engines metadata block present.
+	// (Check top-level keys — brave's native payload has its own "results" array.)
+	var top map[string]any
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatalf("parse top-level: %v", err)
+	}
+	if _, ok := top["results"]; ok {
+		t.Errorf("--raw must not emit a top-level results field")
+	}
+	if _, ok := env.Engines["brave"]; !ok || !env.Engines["brave"].OK {
+		t.Errorf("engines[brave] = %+v, want ok=true", env.Engines["brave"])
+	}
+}
+
+// TestRun_Raw_JSONOnly: --raw combined with text/table/jsonl is exit 2 (§10).
+func TestRun_Raw_JSONOnly(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	for _, fmtArg := range []string{"text", "jsonl", "table"} {
+		code, out, _ := runWith(t, []string{"--raw", "-f", fmtArg, "q"}, reg, "")
+		if code != 2 {
+			t.Errorf("--raw -f %s: exit=%d, want 2", fmtArg, code)
+		}
+		if out != "" {
+			t.Errorf("--raw -f %s: stdout must be empty, got %q", fmtArg, out)
+		}
+	}
+}
+
+// TestRun_Raw_ImpliesNoMerge: --raw --no-merge is accepted (--raw wins, §10).
+func TestRun_Raw_ImpliesNoMerge(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`["q",["T"],["D"],["https://en.wikipedia.org/wiki/T"]]`))
+	}))
+	defer ts.Close()
+	origBase := wikipedia.APIBase()
+	wikipedia.SetAPIBase(ts.URL)
+	defer wikipedia.SetAPIBase(origBase)
+
+	reg := engine.NewRegistry()
+	reg.Register(wikipedia.New())
+
+	code, out, _ := runWith(t, []string{"--raw", "--no-merge", "q"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0", code)
+	}
+	var env format.RawEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("--raw --no-merge stdout not raw JSON: %v\n%s", err, out)
+	}
+	if _, ok := env.Raw["wikipedia"]; !ok {
+		t.Errorf("--raw should win over --no-merge; raw[wikipedia] missing")
 	}
 }
 
