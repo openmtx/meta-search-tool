@@ -18,6 +18,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
+	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 	"github.com/openmtx/meta-search-tool/internal/search"
@@ -36,7 +37,10 @@ func main() {
 func defaultRegistry() *engine.Registry {
 	reg := engine.NewRegistry()
 	if err := reg.Register(brave.New()); err != nil {
-		panic("brave: " + err.Error()) // duplicate name — impossible at compile time
+		panic("brave: " + err.Error())
+	}
+	if err := reg.Register(mojeek.New()); err != nil {
+		panic("mojeek: " + err.Error())
 	}
 	return reg
 }
