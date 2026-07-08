@@ -41,6 +41,7 @@ type Flags struct {
 	ListEngines      bool
 	Verbose          int
 	Version          bool
+	QueryFromFlag    bool // true when -q/--query flag was used (vs positional)
 }
 
 // Parse parses CLI flags from args. out receives --help usage text (errors are
@@ -66,8 +67,9 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	// type/default-formatted) per-flag lines into the §4 tiers, in spec order.
 	fs.Usage = func() { groupedUsage(fs) }
 
-	var enginesStr, excludeStr, requireStr string
+	var enginesStr, excludeStr, requireStr, queryFlag string
 	var weightStrs []string
+	var queryChanged bool
 
 	// Tier 1 — skill-facing (§4).
 	fs.StringVarP(&f.Format, "format", "f", "json", "Output format: json | jsonl | text | table")
@@ -79,6 +81,11 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	fs.StringArrayVarP(&weightStrs, "weight", "", nil, "Per-engine weight override ENGINE=FLOAT (repeatable)")
 	fs.BoolVar(&f.ListEngines, "list-engines", false, "List every engine (name/status/weight) and exit")
 	fs.BoolVar(&f.Version, "version", false, "Print version and exit")
+
+	// -q/--query: the search query as a flag value. Also accepted as positional
+	// args (joined by spaces). Specifying both --query and positional args is a
+	// usage error (same as --stdin + positional).
+	fs.StringVarP(&queryFlag, "query", "q", "", "Search query (also accepted as positional args)")
 
 	// Tier 2 — tuning.
 	fs.StringVar(&requireStr, "require", "", "Comma-separated engines that must run")
@@ -129,14 +136,35 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 		f.Weight[name] = v
 	}
 
+	// Track whether -q/--query was explicitly used (via pflag's Changed).
+	queryChanged = fs.Changed("query")
+
 	// Parse positional args as query.
 	positionalArgs := fs.Args()
+
+	// Conflict: --query + positional args is a usage error (§4).
+	if queryChanged && len(positionalArgs) > 0 {
+		return nil, fmt.Errorf("specifying both --query and positional args is an error")
+	}
+	// Conflict: --query + --stdin is a usage error (two query sources).
+	if queryChanged && f.Stdin {
+		return nil, fmt.Errorf("specifying both --query and --stdin is an error")
+	}
+	// Conflict: --stdin + positional args is a usage error.
 	if f.Stdin && len(positionalArgs) > 0 {
 		return nil, fmt.Errorf("specifying both --stdin and positional args is an error")
 	}
-	query := strings.Join(positionalArgs, " ")
-	if !f.Stdin {
-		// A positional query that is empty/whitespace-only is a usage error (§4).
+
+	if queryChanged {
+		// Query from -q/--query flag.
+		if strings.TrimSpace(queryFlag) == "" {
+			return nil, fmt.Errorf("empty query")
+		}
+		f.Query = queryFlag
+		f.QueryFromFlag = true
+	} else if !f.Stdin {
+		// Query from positional args.
+		query := strings.Join(positionalArgs, " ")
 		if len(positionalArgs) > 0 && strings.TrimSpace(query) == "" {
 			return nil, fmt.Errorf("empty query")
 		}
@@ -161,16 +189,14 @@ func splitComma(s string) []string {
 }
 
 // helpTiers is the §4 skill-tier classification, in display order. Each entry
-// is one tier's (header, ordered flag names). The positional <query> is tier-1
-// too but is not a registered flag (it is described in the usage synopsis), so
-// it does not appear here.
+// is one tier's (header, ordered flag names).
 var helpTiers = []struct {
 	header string
 	flags  []string
 }{
 	{
 		header: "Tier 1 — skill-facing (stable; the only flags a SKILL.md should document)",
-		flags:  []string{"engine", "exclude", "limit", "offset", "format", "weight", "stdin", "list-engines", "version"},
+		flags:  []string{"query", "engine", "exclude", "limit", "offset", "format", "weight", "stdin", "list-engines", "version"},
 	},
 	{
 		header: "Tier 2 — tuning (documented, discouraged for routine skill use)",
@@ -190,7 +216,8 @@ var helpTiers = []struct {
 func groupedUsage(fs *pflag.FlagSet) {
 	out := fs.Output()
 	fmt.Fprintf(out, "Usage:\n  mst [flags] <query...>\n")
-	fmt.Fprintf(out, "\n<query> is the search query (positional args, joined by spaces); see --stdin.\n")
+	fmt.Fprintf(out, "\n<query> is the search query (positional args, joined by spaces); ")
+	fmt.Fprintf(out, "use -q/--query to specify it as a flag.\n")
 
 	// One formatted line per flag, keyed by flag name. A wide wrap disables
 	// usage wrapping so each flag is exactly one line.
