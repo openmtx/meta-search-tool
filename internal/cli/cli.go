@@ -61,11 +61,10 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	// usage is printed explicitly below.
 	fs.SetOutput(io.Discard)
 	// pflag leaves FlagSet.Usage nil by default (calling it panics); assign a
-	// real printer so we can invoke it on --help.
-	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage:\n  mst [flags] <query...>\n\nFlags:\n")
-		fs.PrintDefaults()
-	}
+	// real printer so we can invoke it on --help. §4 requires --help to group
+	// flags by skill tier; groupedUsage regroups pflag's own (correctly
+	// type/default-formatted) per-flag lines into the §4 tiers, in spec order.
+	fs.Usage = func() { groupedUsage(fs) }
 
 	var enginesStr, excludeStr, requireStr string
 	var weightStrs []string
@@ -159,4 +158,75 @@ func splitComma(s string) []string {
 		}
 	}
 	return result
+}
+
+// helpTiers is the §4 skill-tier classification, in display order. Each entry
+// is one tier's (header, ordered flag names). The positional <query> is tier-1
+// too but is not a registered flag (it is described in the usage synopsis), so
+// it does not appear here.
+var helpTiers = []struct {
+	header string
+	flags  []string
+}{
+	{
+		header: "Tier 1 — skill-facing (stable; the only flags a SKILL.md should document)",
+		flags:  []string{"engine", "exclude", "limit", "offset", "format", "weight", "stdin", "list-engines", "version"},
+	},
+	{
+		header: "Tier 2 — tuning (documented, discouraged for routine skill use)",
+		flags:  []string{"rrf-k", "require", "strict", "timeout"},
+	},
+	{
+		header: "Tier 3 — debug/internal (humans; an LLM should not need these)",
+		flags:  []string{"raw", "no-merge", "per-engine-timeout", "config", "verbose"},
+	},
+}
+
+// groupedUsage prints the --help text with flags grouped by §4 skill tier. It
+// delegates per-flag formatting (type placeholder, default value, alignment) to
+// pflag's own FlagUsagesWrapped so the output stays consistent with pflag's
+// conventions — it only reorders and re-groups those ready-made lines into the
+// tiered sections, preserving spec order within each tier.
+func groupedUsage(fs *pflag.FlagSet) {
+	out := fs.Output()
+	fmt.Fprintf(out, "Usage:\n  mst [flags] <query...>\n")
+	fmt.Fprintf(out, "\n<query> is the search query (positional args, joined by spaces); see --stdin.\n")
+
+	// One formatted line per flag, keyed by flag name. A wide wrap disables
+	// usage wrapping so each flag is exactly one line.
+	lines := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(fs.FlagUsagesWrapped(1<<30), "\n"), "\n") {
+		line = strings.TrimRight(line, " ")
+		if line == "" {
+			continue
+		}
+		if name := flagNameInUsage(line); name != "" {
+			lines[name] = line
+		}
+	}
+
+	for _, tier := range helpTiers {
+		fmt.Fprintf(out, "\n%s:\n", tier.header)
+		for _, name := range tier.flags {
+			if line, ok := lines[name]; ok {
+				fmt.Fprintln(out, line)
+			}
+		}
+	}
+}
+
+// flagNameInUsage extracts the long flag name from one pflag usage line, e.g.
+// "  -e, --engine string   ..." → "engine"; "      --stdin   ..." → "stdin".
+func flagNameInUsage(line string) string {
+	i := strings.Index(line, "--")
+	if i < 0 {
+		return ""
+	}
+	rest := line[i+2:]
+	// The name runs until the next whitespace.
+	j := 0
+	for j < len(rest) && (rest[j] == '-' || (rest[j] >= 'a' && rest[j] <= 'z') || (rest[j] >= 'A' && rest[j] <= 'Z') || (rest[j] >= '0' && rest[j] <= '9')) {
+		j++
+	}
+	return rest[:j]
 }

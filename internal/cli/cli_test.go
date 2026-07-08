@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -117,6 +118,51 @@ func TestParse_HelpFlag(t *testing.T) {
 	}
 	if buf.Len() == 0 {
 		t.Error("--help should print usage to the provided writer")
+	}
+}
+
+// TestParse_Help_GroupedByTier verifies §4's requirement that --help groups
+// flags by skill tier (tier-1 flags before tier-2, tier-2 before tier-3), with
+// each tier under its header.
+func TestParse_Help_GroupedByTier(t *testing.T) {
+	var buf bytes.Buffer
+	if _, err := Parse([]string{"--help"}, &buf); err == nil {
+		t.Fatal("Parse(--help) should return ErrHelp")
+	}
+	s := buf.String()
+
+	for _, header := range []string{
+		"Tier 1 — skill-facing",
+		"Tier 2 — tuning",
+		"Tier 3 — debug/internal",
+	} {
+		if !strings.Contains(s, header) {
+			t.Errorf("--help missing tier header %q:\n%s", header, s)
+		}
+	}
+
+	// Ordering: each tier's flags must appear under their own header — a tier-1
+	// flag precedes the tier-2 header, a tier-3 flag follows it.
+	iEngine := strings.Index(s, "--engine")
+	iTier2 := strings.Index(s, "Tier 2")
+	iRaw := strings.Index(s, "--raw")
+	iTier3 := strings.Index(s, "Tier 3")
+	if iEngine < 0 || iTier2 < 0 || iRaw < 0 || iTier3 < 0 {
+		t.Fatalf("expected flags/headers not all found:\n%s", s)
+	}
+	if !(iEngine < iTier2) {
+		t.Errorf("tier-1 flag --engine (%d) must precede the Tier 2 header (%d)", iEngine, iTier2)
+	}
+	if !(iTier3 < iRaw) {
+		t.Errorf("tier-3 flag --raw (%d) must follow the Tier 3 header (%d)", iRaw, iTier3)
+	}
+	// Every registered flag should still be documented somewhere.
+	for _, flag := range []string{"--engine", "--exclude", "--limit", "--format", "--weight",
+		"--rrf-k", "--require", "--strict", "--timeout",
+		"--raw", "--no-merge", "--per-engine-timeout", "--config", "-v", "--verbose"} {
+		if !strings.Contains(s, flag) {
+			t.Errorf("--help missing flag %q", flag)
+		}
 	}
 }
 
