@@ -67,6 +67,22 @@ type ErrorBody struct {
 // Empty results are normalized to `[]` (never JSON null) so exit-1 stdout is a
 // valid `results: []` payload per §4.
 func BuildEnvelope(query string, runs []engine.EngineRun, results []rank.RankedResult, limit int, tookMs int64) *Envelope {
+	if results == nil {
+		results = []rank.RankedResult{}
+	}
+	return &Envelope{
+		Schema:  SchemaVersion,
+		Query:   query,
+		TookMs:  tookMs,
+		Limit:   limit,
+		Engines: buildEngineStats(runs),
+		Results: results,
+	}
+}
+
+// buildEngineStats renders the per-engine §10 `engines` block from the dispatch
+// runs (shared by the merged, --no-merge, and --raw envelopes).
+func buildEngineStats(runs []engine.EngineRun) map[string]EngineStat {
 	engines := make(map[string]EngineStat, len(runs))
 	for _, r := range runs {
 		engines[r.Engine] = EngineStat{
@@ -76,17 +92,7 @@ func BuildEnvelope(query string, runs []engine.EngineRun, results []rank.RankedR
 			Error:  errString(r.Err),
 		}
 	}
-	if results == nil {
-		results = []rank.RankedResult{}
-	}
-	return &Envelope{
-		Schema:  SchemaVersion,
-		Query:   query,
-		TookMs:  tookMs,
-		Limit:   limit,
-		Engines: engines,
-		Results: results,
-	}
+	return engines
 }
 
 // Marshal renders the envelope in the requested format (§10). json → the full
@@ -207,6 +213,110 @@ func marshalListText(engines []ListEngine) []byte {
 	}
 	tw.Flush()
 	return buf.Bytes()
+}
+
+// --- --no-merge output (§10) ----------------------------------------------
+
+// UnmergedResult is one result in --no-merge output (§10): a raw engine result
+// in engine-native order, tagged with its engine, with no score/rank. Source is
+// still derived from the URL (deterministic) for consistency with the merged
+// output; the spec only drops score/rank and adds `engine`.
+type UnmergedResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Source  string `json:"source"`
+	Snippet string `json:"snippet,omitempty"`
+	Engine  string `json:"engine"`
+}
+
+// UnmergedEnvelope is the §10 --no-merge envelope: the same scaffolding as the
+// merged envelope (schema/query/latency/engines) but with results grouped
+// per-engine in native order, each carrying an `engine` field and no score/rank.
+type UnmergedEnvelope struct {
+	Schema  int                   `json:"schema"`
+	Query   string                `json:"query"`
+	TookMs  int64                 `json:"took_ms"`
+	Limit   int                   `json:"limit"`
+	Engines map[string]EngineStat `json:"engines"`
+	Results []UnmergedResult      `json:"results"`
+}
+
+// BuildUnmerged flattens dispatch runs into per-engine native-order results
+// (§10 --no-merge): registration order across engines, native rank order within
+// each engine. A run's Results are included regardless of Err (partial results
+// from a mid-pagination failure still surface, mirroring the merged path). The
+// returned slice is never nil so JSON serializes as `[]`.
+func BuildUnmerged(runs []engine.EngineRun) []UnmergedResult {
+	out := make([]UnmergedResult, 0)
+	for _, run := range runs {
+		for _, r := range run.Results {
+			out = append(out, UnmergedResult{
+				Title:   r.Title,
+				URL:     r.URL,
+				Source:  rank.SourceFromURL(r.URL),
+				Snippet: r.Snippet,
+				Engine:  run.Engine,
+			})
+		}
+	}
+	return out
+}
+
+// BuildUnmergedEnvelope assembles the §10 --no-merge envelope.
+func BuildUnmergedEnvelope(query string, runs []engine.EngineRun, limit int, tookMs int64) *UnmergedEnvelope {
+	return &UnmergedEnvelope{
+		Schema:  SchemaVersion,
+		Query:   query,
+		TookMs:  tookMs,
+		Limit:   limit,
+		Engines: buildEngineStats(runs),
+		Results: BuildUnmerged(runs),
+	}
+}
+
+// MarshalUnmerged renders the --no-merge envelope (§10): json → the full
+// envelope; jsonl → one unmerged result per line; text → "ENGINE: title - url"
+// per result (the engine name prefixes each entry and the rank column is
+// dropped, per §10). table is v0.2 (rejected as an error).
+func MarshalUnmerged(env *UnmergedEnvelope, format string) ([]byte, error) {
+	switch format {
+	case "json":
+		b, err := json.Marshal(env)
+		if err != nil {
+			return nil, err
+		}
+		return append(b, '\n'), nil
+	case "jsonl":
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		for i := range env.Results {
+			if err := enc.Encode(&env.Results[i]); err != nil {
+				return nil, err
+			}
+		}
+		return buf.Bytes(), nil
+	case "text":
+		return marshalUnmergedText(env.Results), nil
+	default:
+		return nil, fmt.Errorf("unsupported format %q for --no-merge", format)
+	}
+}
+
+// marshalUnmergedText renders the §10 --no-merge text format: the engine name
+// prefixes each entry and there is no rank column.
+//
+//	ENGINE: TITLE - URL
+//	    SNIPPET
+func marshalUnmergedText(results []UnmergedResult) []byte {
+	var b strings.Builder
+	for _, r := range results {
+		fmt.Fprintf(&b, "%s: %s - %s\n", r.Engine, r.Title, r.URL)
+		if r.Snippet != "" {
+			fmt.Fprintf(&b, "    %s\n", r.Snippet)
+		}
+	}
+	return []byte(b.String())
 }
 
 // MarshalError renders the §11 structured stderr object for a non-zero exit.

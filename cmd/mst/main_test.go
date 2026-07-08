@@ -333,9 +333,10 @@ func TestRun_VersionAndHelp(t *testing.T) {
 
 func TestRun_RawNoMergeTableDeferred(t *testing.T) {
 	reg := newReg(eng("a", r("t", "https://x/1")))
+	// --no-merge is now implemented (see TestRun_NoMerge_*); only --raw and
+	// -f table remain deferred → exit 2 with "not yet implemented".
 	for _, args := range [][]string{
 		{"--raw", "q"},
-		{"--no-merge", "q"},
 		{"-f", "table", "q"},
 	} {
 		code, out, errs := runWith(t, args, reg, "")
@@ -348,6 +349,123 @@ func TestRun_RawNoMergeTableDeferred(t *testing.T) {
 		if !strings.Contains(errs, "not yet implemented") {
 			t.Errorf("%v: expected 'not yet implemented' message, got %s", args, errs)
 		}
+	}
+}
+
+// === --no-merge (§10) =======================================================
+
+func TestRun_NoMerge_JSON(t *testing.T) {
+	reg := newReg(
+		eng("alpha", r("A1", "https://a.example/1"), r("A2", "https://a.example/2")),
+		eng("beta", r("B1", "https://b.example/1")),
+	)
+	code, out, errs := runWith(t, []string{"--no-merge", "q"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errs)
+	}
+	var env format.UnmergedEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("--no-merge stdout not valid JSON: %v\n%s", err, out)
+	}
+	if env.Schema != 1 {
+		t.Errorf("schema=%d, want 1", env.Schema)
+	}
+	// 3 results total, grouped per-engine in registration order, native order within.
+	if len(env.Results) != 3 {
+		t.Fatalf("results=%d, want 3", len(env.Results))
+	}
+	want := []struct{ engine, url string }{
+		{"alpha", "https://a.example/1"},
+		{"alpha", "https://a.example/2"},
+		{"beta", "https://b.example/1"},
+	}
+	for i, w := range want {
+		if env.Results[i].Engine != w.engine || env.Results[i].URL != w.url {
+			t.Errorf("result[%d] = %+v, want engine=%s url=%s", i, env.Results[i], w.engine, w.url)
+		}
+		// No score/rank on unmerged items; source is derived.
+		if env.Results[i].Source == "" {
+			t.Errorf("result[%d] source empty", i)
+		}
+	}
+	// JSON must carry no score/rank fields and an engine field per item.
+	if strings.Contains(out, `"rank"`) || strings.Contains(out, `"score"`) {
+		t.Errorf("--no-merge items must not carry rank/score:\n%s", out)
+	}
+	if !strings.Contains(out, `"engine":"alpha"`) {
+		t.Errorf("--no-merge items must carry engine field:\n%s", out)
+	}
+	// engines metadata block still present.
+	if env.Engines["alpha"].Count != 2 || !env.Engines["alpha"].OK {
+		t.Errorf("alpha stat = %+v, want ok/count=2", env.Engines["alpha"])
+	}
+}
+
+func TestRun_NoMerge_JSONL(t *testing.T) {
+	reg := newReg(
+		eng("alpha", r("A1", "https://a.example/1"), r("A2", "https://a.example/2")),
+	)
+	_, out, _ := runWith(t, []string{"--no-merge", "-f", "jsonl", "q"}, reg, "")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("jsonl: %d lines, want 2", len(lines))
+	}
+	for i, l := range lines {
+		var u format.UnmergedResult
+		if err := json.Unmarshal([]byte(l), &u); err != nil {
+			t.Errorf("jsonl line %d not an unmerged result: %v: %s", i, err, l)
+		}
+		if u.Engine != "alpha" {
+			t.Errorf("line %d engine=%q, want alpha", i, u.Engine)
+		}
+	}
+}
+
+func TestRun_NoMerge_Text(t *testing.T) {
+	reg := newReg(eng("alpha", r("Hello", "https://a.example/1")))
+	_, out, _ := runWith(t, []string{"--no-merge", "-f", "text", "q"}, reg, "")
+	// text prefixes the engine name and drops the rank column (§10).
+	want := "alpha: Hello - https://a.example/1\n    snip https://a.example/1\n"
+	if out != want {
+		t.Errorf("--no-merge text = %q, want %q", out, want)
+	}
+}
+
+func TestRun_NoMerge_OffsetIsNoOp(t *testing.T) {
+	reg := newReg(eng("alpha", r("A1", "https://a.example/1"), r("A2", "https://a.example/2")))
+	// --offset under --no-merge is a no-op: all results still emitted (§4).
+	_, out, _ := runWith(t, []string{"--no-merge", "--offset", "1", "q"}, reg, "")
+	var env format.UnmergedEnvelope
+	json.Unmarshal([]byte(out), &env)
+	if len(env.Results) != 2 {
+		t.Errorf("--no-merge --offset 1 emitted %d results, want 2 (offset is a no-op)", len(env.Results))
+	}
+}
+
+// TestRun_NoMerge_PartialResultsOnFailure: a mid-run engine error still yields
+// the results it produced (mirrors the merged partial-results contract, §7).
+func TestRun_NoMerge_PartialResultsOnFailure(t *testing.T) {
+	boom := errors.New("upstream 500")
+	flaky := &fakeEngine{name: "flaky", weight: 1.0, enabled: true, results: []engine.Result{r("F1", "https://f.example/1")}, err: boom}
+	reg := newReg(eng("ok", r("O1", "https://o.example/1")), flaky)
+	code, out, _ := runWith(t, []string{"--no-merge", "q"}, reg, "")
+	if code != 0 { // results present, non-required failure → exit 0
+		t.Fatalf("exit=%d, want 0", code)
+	}
+	var env format.UnmergedEnvelope
+	json.Unmarshal([]byte(out), &env)
+	// flaky's partial result still appears.
+	found := false
+	for _, r := range env.Results {
+		if r.Engine == "flaky" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("flaky's partial result missing from --no-merge output: %+v", env.Results)
+	}
+	if env.Engines["flaky"].OK {
+		t.Errorf("flaky stat should be ok=false")
 	}
 }
 

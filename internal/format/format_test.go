@@ -284,3 +284,110 @@ func TestMarshalListEngines_TableRejected(t *testing.T) {
 		t.Error("unknown format must be rejected")
 	}
 }
+
+// === --no-merge output (§10) ===============================================
+
+func sampleRuns() []engine.EngineRun {
+	return []engine.EngineRun{
+		{Engine: "alpha", Results: []engine.Result{
+			{Title: "A1", URL: "https://a.example/1", Snippet: "snip one"},
+			{Title: "A2", URL: "https://a.example/2"},
+		}},
+		{Engine: "beta", Results: []engine.Result{
+			{Title: "B1", URL: "https://www.b.example/x"},
+		}},
+	}
+}
+
+func TestBuildUnmerged(t *testing.T) {
+	got := BuildUnmerged(sampleRuns())
+	if len(got) != 3 {
+		t.Fatalf("got %d, want 3", len(got))
+	}
+	// Registration order across engines, native order within.
+	if got[0].Engine != "alpha" || got[0].URL != "https://a.example/1" {
+		t.Errorf("[0] = %+v", got[0])
+	}
+	if got[2].Engine != "beta" {
+		t.Errorf("[2] = %+v, want beta", got[2])
+	}
+	// Source is derived (www.b.example → b.example).
+	if got[2].Source != "b.example" {
+		t.Errorf("[2].Source = %q, want b.example", got[2].Source)
+	}
+}
+
+// TestBuildUnmerged_EmptyNeverNil: an empty run set yields [], never nil.
+func TestBuildUnmerged_EmptyNeverNil(t *testing.T) {
+	got := BuildUnmerged(nil)
+	if got == nil {
+		t.Error("BuildUnmerged(nil) must return non-nil []")
+	}
+	env := BuildUnmergedEnvelope("q", nil, 10, 1)
+	out, err := MarshalUnmerged(env, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"results":[]`) {
+		t.Errorf("empty --no-merge must serialize results:[], got %s", out)
+	}
+}
+
+func TestMarshalUnmerged_JSON(t *testing.T) {
+	env := BuildUnmergedEnvelope("q", sampleRuns(), 10, 7)
+	out, err := MarshalUnmerged(env, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got UnmergedEnvelope
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("--no-merge json does not parse: %v\n%s", err, out)
+	}
+	if len(got.Results) != 3 || got.Results[0].Engine != "alpha" {
+		t.Errorf("results = %+v", got.Results)
+	}
+	s := string(out)
+	if strings.Contains(s, `"rank"`) || strings.Contains(s, `"score"`) {
+		t.Errorf("--no-merge json must not carry rank/score:\n%s", s)
+	}
+	if !strings.Contains(s, `"engine":"alpha"`) {
+		t.Errorf("--no-merge json must carry engine field:\n%s", s)
+	}
+}
+
+func TestMarshalUnmerged_JSONL(t *testing.T) {
+	env := BuildUnmergedEnvelope("q", sampleRuns(), 10, 7)
+	out, err := MarshalUnmerged(env, "jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("jsonl: %d lines, want 3", len(lines))
+	}
+	var u UnmergedResult
+	if err := json.Unmarshal([]byte(lines[0]), &u); err != nil || u.Engine != "alpha" {
+		t.Errorf("jsonl line 0 = %q / %+v", lines[0], u)
+	}
+}
+
+func TestMarshalUnmerged_Text(t *testing.T) {
+	env := BuildUnmergedEnvelope("q", sampleRuns(), 10, 7)
+	out, err := MarshalUnmerged(env, "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	// Engine name prefixes each entry; no rank column (§10).
+	want := "alpha: A1 - https://a.example/1\n    snip one\nalpha: A2 - https://a.example/2\nbeta: B1 - https://www.b.example/x\n"
+	if s != want {
+		t.Errorf("--no-merge text = %q, want %q", s, want)
+	}
+}
+
+func TestMarshalUnmerged_TableRejected(t *testing.T) {
+	env := BuildUnmergedEnvelope("q", sampleRuns(), 10, 7)
+	if _, err := MarshalUnmerged(env, "table"); err == nil {
+		t.Error("table must be rejected (v0.2)")
+	}
+}
