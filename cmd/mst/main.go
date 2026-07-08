@@ -274,7 +274,7 @@ func resolveQuery(flags *cli.Flags, stdin io.Reader) (string, error) {
 		}
 		return q, nil
 	}
-	return "", fmt.Errorf("no query provided (use positional args or --stdin)")
+	return "", fmt.Errorf("no query provided (use positional args, --stdin, or -q/--query)")
 }
 
 // validateFormat checks the --format value and the --raw / --no-merge modes

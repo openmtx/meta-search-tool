@@ -73,7 +73,7 @@ cat query.txt | mst --stdin
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-q, --query` *(positional)* | — | The search query (also accepted as positional args, joined by space). |
+| `-q, --query` | — | The search query (also accepted as positional args, joined by space). Specifying both `--query` and positional args is a usage error (exit 2). |
 | `--stdin` | `false` | Read the query from stdin. |
 | `-e, --engine` | *all enabled* | Comma-separated subset of engines to use (e.g. `brave,ddg`). |
 | `--exclude` | — | Comma-separated engines to disable for this run. |
@@ -93,15 +93,17 @@ cat query.txt | mst --stdin
 | `--verbose` | `0` | `-v` increases diagnostics (which engines ran, latency, errors). |
 | `--version` | — | Print version and exit. |
 
-**Query input resolution:** the query is taken from positional args (joined by
-single spaces) by default; `--stdin` reads the whole stream until EOF and trims
-a single trailing newline. Specifying **both** `--stdin` and positional args is
-a usage error → exit `2`. Supplying **neither** (no positional args and empty or
-absent stdin) is also exit `2`, as is `--stdin` with an **empty** stream (e.g.
-`echo -n '' | mst --stdin`) — an empty query is a usage error regardless of
-source. An empty or whitespace-only positional query (e.g. `mst ""`) is
-likewise exit `2`. `--list-engines` and `--version` short-circuit
-before query resolution.
+**Query input resolution:** the query can come from `-q`/`--query`, from
+positional args (joined by single spaces), or from `--stdin` — but only one
+source at a time. Specifying **both** `--query` and positional args, **both**
+`--query` and `--stdin`, or **both** `--stdin` and positional args is a usage
+error → exit `2`. Supplying **none** of the three (no positional args, no
+`--query`, and empty or absent stdin) is also exit `2`, as is `--stdin` with an
+**empty** stream (e.g. `echo -n '' | mst --stdin`) — an empty query is a usage
+error regardless of source. An empty or whitespace-only positional query (e.g.
+`mst ""`) or an empty `--query` value (e.g. `mst --query ""`) is likewise
+exit `2`. `--list-engines` and `--version` short-circuit before query
+resolution.
 
 **Engine selection precedence:** `--engine` sets the active set (whitelist);
 `--exclude` then removes engines from that set (so `--exclude` wins on conflict).

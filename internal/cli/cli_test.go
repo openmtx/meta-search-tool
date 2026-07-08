@@ -57,6 +57,37 @@ func TestParse_WeightFlag(t *testing.T) {
 	}
 }
 
+func TestParse_QueryFlag(t *testing.T) {
+	flags, err := Parse([]string{"-q", "my search query"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if flags.Query != "my search query" {
+		t.Errorf("query = %q, want %q", flags.Query, "my search query")
+	}
+	if !flags.QueryFromFlag {
+		t.Error("QueryFromFlag should be true")
+	}
+}
+
+func TestParse_QueryFlagAndPositionalConflict(t *testing.T) {
+	if _, err := Parse([]string{"-q", "hello", "world"}, io.Discard); err == nil {
+		t.Error("Parse() expected error for -q + positional args, got nil")
+	}
+}
+
+func TestParse_QueryFlagAndStdinConflict(t *testing.T) {
+	if _, err := Parse([]string{"-q", "hello", "--stdin"}, io.Discard); err == nil {
+		t.Error("Parse() expected error for -q + --stdin, got nil")
+	}
+}
+
+func TestParse_QueryFlagEmpty(t *testing.T) {
+	if _, err := Parse([]string{"--query", ""}, io.Discard); err == nil {
+		t.Error("Parse() expected error for empty --query, got nil")
+	}
+}
+
 func TestParse_StdinAndPositionalConflict(t *testing.T) {
 	if _, err := Parse([]string{"--stdin", "some query"}, io.Discard); err == nil {
 		t.Error("Parse() expected error for --stdin + positional args, got nil")
@@ -80,8 +111,8 @@ func TestParse_PerEngineTimeout(t *testing.T) {
 }
 
 func TestParse_ShortFlags(t *testing.T) {
-	// -e/-n/-f are aliases of --engine/--limit/--format (spec §4).
-	flags, err := Parse([]string{"-e", "brave,ddg", "-n", "5", "-f", "jsonl", "query"}, io.Discard)
+	// -e/-n/-f/-q are aliases of --engine/--limit/--format/--query (spec §4).
+	flags, err := Parse([]string{"-e", "brave,ddg", "-n", "5", "-f", "jsonl", "-q", "query"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
@@ -96,6 +127,9 @@ func TestParse_ShortFlags(t *testing.T) {
 	}
 	if flags.Query != "query" {
 		t.Errorf("query = %q, want query", flags.Query)
+	}
+	if !flags.QueryFromFlag {
+		t.Error("QueryFromFlag should be true when -q is used")
 	}
 }
 
@@ -157,7 +191,7 @@ func TestParse_Help_GroupedByTier(t *testing.T) {
 		t.Errorf("tier-3 flag --raw (%d) must follow the Tier 3 header (%d)", iRaw, iTier3)
 	}
 	// Every registered flag should still be documented somewhere.
-	for _, flag := range []string{"--engine", "--exclude", "--limit", "--format", "--weight",
+	for _, flag := range []string{"--query", "--engine", "--exclude", "--limit", "--format", "--weight",
 		"--rrf-k", "--require", "--strict", "--timeout",
 		"--raw", "--no-merge", "--per-engine-timeout", "--config", "-v", "--verbose"} {
 		if !strings.Contains(s, flag) {

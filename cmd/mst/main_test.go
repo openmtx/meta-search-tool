@@ -206,6 +206,56 @@ func TestRun_Exit2_EmptyPositionalQuery(t *testing.T) {
 	}
 }
 
+func TestRun_QueryFlag(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	code, out, _ := runWith(t, []string{"-q", "hello from flag"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, `"query":"hello from flag"`) {
+		t.Errorf("-q flag query not reflected in output: %s", out)
+	}
+}
+
+func TestRun_QueryFlagAndPositionalConflict(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	code, out, errs := runWith(t, []string{"-q", "hello", "world"}, reg, "")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (conflict)", code)
+	}
+	if out != "" {
+		t.Errorf("exit-2 stdout must be empty, got %q", out)
+	}
+	if !strings.Contains(errs, "both --query and positional") {
+		t.Errorf("expected conflict message, got %s", errs)
+	}
+}
+
+func TestRun_QueryFlagAndStdinConflict(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	code, out, errs := runWith(t, []string{"-q", "hello", "--stdin"}, reg, "")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (conflict)", code)
+	}
+	if out != "" {
+		t.Errorf("exit-2 stdout must be empty, got %q", out)
+	}
+	if !strings.Contains(errs, "both --query and --stdin") {
+		t.Errorf("expected conflict message, got %s", errs)
+	}
+}
+
+func TestRun_QueryFlagEmpty(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	code, _, errs := runWith(t, []string{"--query", ""}, reg, "")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (empty --query)", code)
+	}
+	if !strings.Contains(errs, "empty query") {
+		t.Errorf("expected empty query message, got %s", errs)
+	}
+}
+
 func TestRun_Exit2_RequireMissingKey(t *testing.T) {
 	reg := newReg(&fakeEngine{name: "brave", weight: 2.0, enabled: true, keyed: true, keyEnv: "BRAVE_API_KEY"})
 	code, out, errs := runWith(t, []string{"--require", "brave", "q"}, reg, "")

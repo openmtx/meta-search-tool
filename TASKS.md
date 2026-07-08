@@ -109,7 +109,7 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 - [x] E2E tests: `TestRun_Wikipedia_E2E`, `TestRun_DDG_E2E`, `TestRun_DDG_OffByDefault` in `cmd/mst/main_test.go`
 - **DoD:** ✅ Done: 217 tests green (-race). Wikipedia parses JSON OpenSearch API; ddg off by default
   (explicit `--engine ddg` required); E2E pipeline tests for both engines.
-#### Sprint A.2.2 — hardening: tests (§14), `--list-engines`, exit/format polish
+#### Sprint A.2.2 — hardening: tests (§14), `--list-engines`, exit/format polish   ▶ complete
 - [x] Fuzz/property tests for canonicalization + RRF (§14): `FuzzCanonicalize`
   (idempotency/fragment-free/no-panic; 60s/4.4M-exec run clean) + property tests
   (run-reordering determinism, single-engine score monotonicity, dedup-sums,
@@ -118,17 +118,27 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
   (bool or `null`)/`weight`/`status`, respecting `--format` (json/jsonl/text;
   table → exit 2). Replaces the A.0.2 placeholder. State resolution shared with
   `resolvePlan` via new `computeStates`.
+- [x] `--no-merge` (§10) — per-engine native-order groups, `engine` field, no
+  score/rank; json/jsonl/text; `--offset` is a no-op with a -v notice.
+- [x] `--raw` (§10) — per-engine parsed native payload keyed by engine name
+  (JSON-only); new `engine.RawEngine` interface + `EngineRun.Raw` + `DispatchRaw`;
+  all 4 engines implement it (JSON engines → decoded JSON; scrape engines →
+  response body).
+- [x] `--help` groups flags by §4 skill tier (Tier 1/2/3, spec order).
 - [x] `--format text` (results) verified; `--format table` → exit 2 (v0.2);
-  exit codes 0/1/2/3 verified (existing suite).
-- [ ] **OPEN (v0.1-tagging boundary):** `--no-merge` + `--raw` (§10; DECISIONS c
-  assigns to A.2.x) and §4 `--help` tier grouping are v0.1-scope per §16 but
-  not in this sprint's literal DoD and each is non-trivial (`--raw` needs an
-  Engine-interface change to expose raw payloads). Decision pending — see
-  DECISIONS.md (2026-07-08).
-- **DoD:** `go test ./...` green incl. fuzz/property tests for canonicalization + RRF; `--list-engines`, `--format text/table`, and exit codes verified; v0.1 is taggable.
-  - ✅ Partial (2026-07-08): fuzz/property + `--list-engines` + text/table/exit
-    verification done; 241 tests green (-race). Remaining v0.1 items
-    (`--no-merge`/`--raw`/`--help` grouping) pending scope decision.
+  exit codes 0/1/2/3 verified.
+- **DoD:** ✅ Done (2026-07-08): 262 tests green (-race). §14 fuzz/property;
+  `--list-engines`; `--no-merge`; `--raw`; `--help` tier grouping; text/table/
+  exit codes verified. **v0.1 is feature-complete per §16 and taggable**
+  (version const is still `dev`; a v0.1 tag/release is the explicit next step).
+
+---
+
+## ✅ Tier A — reliable general web — done (v0.1-ready, 2026-07-08)
+Foundation (dispatch/rank/config/CLI/format/errors) + engines `brave`, `mojeek`,
+plus `wikipedia` (Tier B) and `ddg` (Tier C, off by default), and full v0.1
+hardening (§14 fuzz/property tests, `--list-engines`, `--no-merge`, `--raw`,
+`--help` tier grouping). 262 tests green (-race). Ready to tag v0.1.
 
 ---
 

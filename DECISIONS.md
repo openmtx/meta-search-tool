@@ -196,6 +196,22 @@ Entry template:
 - **Status:** proposed (risk recorded; no spec change yet — re-evaluate at the
   v0.2/`table` sprint or whenever `ddg` access is next touched).
 
+## 2026-07-08 — `-q`/`--query` flag implemented (spec deviation resolved)
+
+- **Context:** Spec §4 flag table documents `-q, --query` as a flag alias for the
+  positional query argument, but the implementation only accepted the query as
+  positional args — a spec deviation flagged in the Tier 1 code review.
+- **Decision:** Register `-q`/`--query` as a `StringVarP` flag in the Tier 1 flag
+  set. The query can come from `-q`/`--query`, positional args, or `--stdin` — but
+  only one source at a time: `--query` + positional, `--query` + `--stdin`, and
+  `--stdin` + positional are all usage errors (exit 2). The `Flags.QueryFromFlag`
+  field tracks whether the flag was used (vs positional), and `--help` now lists
+  `--query` as the first Tier 1 flag. The `helpTiers` comment about "not a
+  registered flag" is removed.
+- **Rationale:** Conformance to the spec table; closes the only Tier 1 deviation.
+- **Status:** accepted — folded into spec §4 (the flag table was already correct;
+  the implementation now matches).
+
 ## 2026-07-08 — `--list-engines` full output + remaining v0.1-scope items
 
 - **Context:** Sprint A.2.2 ("hardening"). DECISIONS (e) deferred the full
