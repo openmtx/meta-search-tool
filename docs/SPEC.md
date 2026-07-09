@@ -276,15 +276,21 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
 
 `†` Mojeek is reached by scraping in v1 (its API is paid/beta); more scrape-tolerant than the Tier-C engines. See access notes below.
 
-> **DuckDuckGo note:** DDG's official Instant Answer API is deprecated and of
-> limited coverage; `mst` instead parses the HTML results endpoint. Real-world
-> metasearch deployments pin DDG at the *lowest* weight with an aggressive
-> timeout — datacenter requests get heavily anti-scraped. Accordingly `ddg` is
-> **off by default** (§17.3): opt in with `--engine ddg` or `ddg.enabled: true`.
-> It remains a keyless fallback when no keyed engine is configured. HTML
-> scraping also carries ToS/legal considerations — users are responsible for
-> compliance in their jurisdiction; `mst` sends only an identifying `User-Agent`
-> (§12) and bounds load via the retry policy (§11).
+> **DuckDuckGo note:** DDG has no public search API; the official Instant
+> Answer API is deprecated and of limited coverage. `mst` instead drives the
+> no-JS HTML endpoint the same way SearXNG does (see `docs/DDG-research.md`): a
+> form **POST** to `html.duckduckgo.com/html/` carrying a static browser
+> `User-Agent` and browser `Sec-Fetch-*`/`Referer` headers (§12 scrape-engine
+> carve-out), parsing the returned HTML, and detecting the embedded CAPTCHA
+> challenge (`<form id="challenge-form">`) as an engine error rather than
+> silently returning zero results. Real-world metasearch deployments pin DDG at
+> the *lowest* weight with an aggressive timeout — datacenter requests get
+> heavily anti-scraped. Accordingly `ddg` is **off by default** (§17.3): opt in
+> with `--engine ddg` or `ddg.enabled: true`. It remains a keyless fallback when
+> no keyed engine is configured. HTML scraping carries ToS/legal considerations
+> — users are responsible for compliance in their jurisdiction; `mst` bounds
+> load via the retry policy (§11). Only page 1 is fetched (the `vqd` token
+> required for page 2+ is a documented follow-up), yielding ~10–15 results.
 
 ### Engine access notes (implementation)
 
@@ -294,6 +300,19 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
   header. General-result selectors (port to Go + goquery): container
   `ul.results-standard > li > a.ob`; url `a.ob/@href`; title `../h2/a`; snippet
   `..//p.s`. (Source: SearXNG `engines/mojeek.py`.)
+- **`ddg` (HTML scrape, keyless):** `POST https://html.duckduckgo.com/html/`
+  (no-JS form, `application/x-www-form-urlencoded`) with body `q=<query>&b=&kl=wt-wt`
+  (page 1) and a static browser `User-Agent` + browser headers
+  (`Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: same-origin`,
+  `Sec-Fetch-User: ?1`, `Referer: https://html.duckduckgo.com/html/`). Selectors
+  (port to Go + goquery, reverse-engineered from live markup): container
+  `#links > div[class~=web-result]`; url+title `h2/a/@href`+text; snippet
+  `a.result__snippet`. Result hrefs may be wrapped in a `//duckduckgo.com/l/?uddg=<enc>`
+  redirect — unwrap to the real destination. Detect `<form id="challenge-form">`
+  as a CAPTCHA and report it as an engine error. Skip queries ≥500 chars (DDG
+  rejects them). Only page 1 is fetched; page 2+ needs a `vqd` token extracted
+  from the page-1 response (deferred). (Source: SearXNG `engines/duckduckgo.py`,
+  summarized in `docs/DDG-research.md`.)
 - **`grokipedia` (JSON, keyless):** `GET https://grokipedia.com/api/full-text-search?query=<q>&limit=10&offset=<n>`.
   Returns `{results:[{slug,title,snippet}]}`; map url =
   `https://grokipedia.com/page/<slug>` (html→text on snippet). No auth — the
@@ -620,11 +639,17 @@ would need a different merge strategy and is deferred (§18).
 ## 12. Security
 
 - API keys **only** read from env vars or config; never logged.
-- User-Agent set to `mst/<version>` — an honest, identifiable UA. Trade-off:
-  it is trivially blockable (a single filter denies `mst/*`), accepted for v1
-  because the structured-API engines don't care and the scrape engines
-  (`mojeek`/`ddg`) are best-effort anyway. Making the UA configurable
-  (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
+- User-Agent: **structured-API engines** send `mst/<version>` — an honest,
+  identifiable UA. Trade-off: it is trivially blockable (a single filter denies
+  `mst/*`), accepted because the API engines don't filter on UA. **Scrape
+  engines** are exempted and may send a static realistic browser UA plus the
+  `Sec-Fetch-*`/`Referer` headers a real browser sends, because some scraped
+  endpoints bot-block identifying/non-browser UAs. `ddg` does so — a non-browser
+  UA returns DDG's anomaly/CAPTCHA page with no results (see the `ddg` access
+  notes in §5 and `docs/DDG-research.md`) — and detects the embedded CAPTCHA
+  challenge, reporting it as an engine error rather than silently returning zero
+  results. `mojeek` keeps the honest UA for now (it is scrape-tolerant). Making
+  the UA configurable (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
 - Outbound requests limited to configured engine endpoints; no arbitrary URLs.
 - TLS verification always on; no option to disable.
 
@@ -757,9 +782,10 @@ Tracked explicitly so they don't get lost:
   coalescing are deferred (ambiguous path-vs-query semantics; mobile hosts may
   differ in content). The tracking-param set is fixed in v1; making it
   user-configurable is deferred.
-- **HTTP User-Agent:** fixed to `mst/<version>` in v1 (§12); making it
-  configurable (`MST_USER_AGENT` / `http.user_agent`) and scrape-UA rotation are
-  deferred.
+- **HTTP User-Agent:** structured-API engines fixed to `mst/<version>` (§12);
+  scrape engines use a static browser UA (§12 carve-out — `ddg`; `mojeek`
+  keeps the honest UA for now). Making the UA configurable
+  (`MST_USER_AGENT` / `http.user_agent`) and scrape-UA rotation are deferred.
 - **Domain boosts:** deferred to post-v1; design how they interact with RRF.
 - **Search profiles (§19):** **term resolved → `--profile`** (shorter, less
   jargony than `--topic`/`--vertical`); still open — whether profiles are

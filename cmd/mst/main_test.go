@@ -864,14 +864,12 @@ func TestRun_Wikipedia_E2E(t *testing.T) {
 // TestRun_DDG_E2E exercises the full pipeline with a real ddg engine
 // backed by an httptest server: dispatch → rank → format → exit code.
 func TestRun_DDG_E2E(t *testing.T) {
-	fixture := `<html><body>` +
-		`<div class="result">` +
-		`  <a class="result__a" href="https://example.com/ddg-result">` +
-		`    <h2 class="result__title">DDG Result</h2>` +
-		`    <p class="result__snippet">DuckDuckGo snippet.</p>` +
-		`  </a>` +
+	fixture := `<html><body><div id="links">` +
+		`<div class="web-result">` +
+		`<h2><a class="result__a" href="https://example.com/ddg-result">DDG Result</a></h2>` +
+		`<a class="result__snippet">DuckDuckGo snippet.</a>` +
 		`</div>` +
-		`</body></html>`
+		`</div></body></html>`
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
