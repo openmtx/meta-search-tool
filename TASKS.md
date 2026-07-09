@@ -166,7 +166,7 @@ Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
       `--engine all` (all engines)
 - [x] `--list-engines` shows CATEGORY column in text format, `category` in JSON
 - [x] Mixing aliases with engine names: strict-whitelist semantics, dedup'd
-- [ ] Update spec §4, §8, §5, §16
+- [x] Update spec §4, §8, §5, §16
 - [ ] Revisit arxiv AND fix: categories make OR-flooding unreachable for default
       (general) queries since arxiv won't run under `general` category — the
       AND fix was already reverted in favor of categories.
