@@ -16,6 +16,223 @@ Entry template:
 - **Status:** proposed | accepted (folded into spec §X) | rejected
 -->
 
+## 2026-07-09 — arxiv AND-term query (fixes multi-word noise flood)
+- **Context:** A live query ("What's Erling Haaland's diet?") showed arxiv
+  returning 30 loosely-matched physics papers ("ERL" = Energy Recovery Linac,
+  matching "Erling"), which at weight 1.2 crowded ddg's 10 genuinely-relevant
+  results entirely out of the top 20. Root cause (confirmed via the arXiv API
+  feed title): mst sent `search_query=all:<whole query>`, and arXiv's query
+  syntax **OR's adjacent fielded terms** — `all:What's Erling Haaland's diet?`
+  was parsed as `all:What's OR all:Erling OR all:Haaland's OR all:diet?`, so any
+  paper matching *any* word was returned.
+- **Decision:** Construct the query by explicitly AND-ing each term
+  (`all:t1 AND all:t2 AND ...`) so a paper must contain *every* query term.
+  Validated live: the Haaland query → 0 hits (honest, no flood); an in-domain
+  query ("transformer attention") → precise relevant hits; single-term queries
+  unaffected. After the fix the Haaland query's merged top-20 went from
+  `10 mojeek + 10 arxiv(noise)` to `10 mojeek + 10 ddg` — ddg surfaced.
+- **Rationale:** arXiv is a specialized academic engine; AND-ing terms makes it
+  honestly return ~0 for out-of-domain natural-language queries instead of a
+  high-count noise flood that distorts RRF ranking. This is the correct search
+  semantics (require all terms), not a hack.
+- **Status:** accepted — engine + tests updated; added `TestSearch_Live`
+  (MST_ITEST=1) asserting in-domain returns results and out-of-domain returns
+  ≤5. No spec change (§5 access notes said `search_query=all:<q>`; that was the
+  bug — the access note is now superseded by the AND construction in code).
+
+## 2026-07-09 — ddg enabled by default (overturns §17.3 "off by default")
+- **Context:** §17.3/§5/§6 shipped `ddg` as `enabled: false` on the rationale
+  that DDG's scrape is "fragile" and "datacenter requests get heavily
+  anti-scraped." Live testing this session overturned that premise: after the
+  SearXNG-mechanism redesign + UA rotation, ddg returned 10 results reliably on
+  every live run, while mojeek (the other keyless general-web engine) got HTTP
+  403-blocked mid-query. A default-flags query ("Erling Haaland diet") showed the
+  default set has no robust general-web fallback when mojeek is blocked — ddg
+  would have answered it but was off.
+- **Decision:** Flip `ddg` Descriptor `Enabled` to true. ddg joins mojeek as the
+  second keyless general-web engine on by default; disable with `--exclude ddg`
+  or `ddg.enabled: false`. Weight stays 1.0 (set earlier). grokipedia remains
+  `enabled: false` (still experimental/inactive upstream).
+- **Rationale:** The original fragility rationale no longer matches observed
+  reality; ddg is now the more reliable of the two keyless general-web engines.
+  Two general-web engines on by default gives a keyless install redundancy.
+- **Status:** accepted — folded into spec §5 (Mojeek note, Tier C table, DDG
+  note), §6 (config example enabled:true), §16 (roadmap), §17.3. Code + tests
+  updated; `TestRun_DDG_OffByDefault` repurposed to `TestRun_DDG_OnByDefault`.
+
+## 2026-07-09 — live-only engine bugs: pubmed/hackernews/stackexchange; ddg weight 1.0
+- **Context:** An all-engines live run of a real query surfaced that 3
+  "complete" engines (httptest-green) failed against their live endpoints —
+  the same live-fidelity gap that hit ddg/grokipedia. hackernews/pubmed/stackexchange
+  all used the `base.Path = "..."` pattern on an apiBase that already carried a
+  path prefix; `url.URL.Path` assignment *replaces* (not appends), dropping the
+  prefix and hitting the wrong path. Their httptest tests asserted the dropped
+  path, so passed while broken (identical to the grokipedia bug found earlier).
+- **Root cause (recurring):** 4 engines (grokipedia, hackernews, pubmed,
+  stackexchange) shared the `apiBase="<host>/<prefix>"` + `base.Path="/<leaf>"`
+  anti-pattern. Fixed uniformly: apiBase = host origin; base.Path = the full path.
+  Tests now assert the full path; apiBase is overridden to the host only.
+- **Per-engine fixes (all live-verified via new MST_ITEST=1 tests):**
+  - **hackernews:** `/search` → `/api/v1/search` (was 404).
+  - **pubmed:** `/esearch.fcgi`,`/esummary.fcgi` → `/entrez/eutils/...` (was 404).
+    esearch kept XML (dropped the contradictory `retmode=json`; the live XML
+    `<eSearchResult><IdList><Id>` already matched the struct). esummary switched
+    XML→JSON: its struct expected `<ArticleSet><Article><title>` which never
+    matched live (`<eSummaryResult><DocSum><Item Name="Title">…>`); the JSON
+    `retmode=json` schema `{result:{uids:[],<pmid>:{title,source,pubdate}}}` is
+    far cleaner.
+  - **stackexchange:** versionless `/search/advanced` + invalid hardcoded
+    `filter=!*236cL9uK5*(T6` → 400. Fixed to `/2.3/search/advanced`, valid
+    `filter=withbody` (SE shorthand that includes body for snippets), and
+    `maxcount`→`pagesize` (maxcount isn't a search/advanced param).
+- **ddg weight 0.5→1.0:** a live run showed ddg (weight 0.5) found the most
+  relevant results but ranked below a flood of high-count arxiv/grokipedia hits;
+  bumped to 1.0 so web-search results compete. Spec §6 config example updated.
+- **Status:** accepted — engine + test fixes folded in; 4 engines now carry
+  MST_ITEST=1 live tests (pubmed/hackernews/stackexchange added; ddg/grokipedia
+  already had them). ddg weight folded into spec §6. No further spec change
+  needed (the access-note endpoints were already correct; only the code diverged).
+
+## 2026-07-09 — grokipedia review fixes (path bug + html→text + live test)
+- **Context:** Sprint B.1.5 (`grokipedia`) was implemented by a concurrent
+  session and marked complete, but a review against spec §5 + SearXNG
+  `engines/grokipedia.py` found two issues, one masked by the engine's own tests.
+- **Findings & fixes:**
+  1. **Wrong API path (critical, masked by tests).** `buildRequestURL` set
+     `base.Path = "/full-text-search"` on `apiBase = "https://grokipedia.com/api"`;
+     assigning `url.Path` *replaces* (not appends), dropping `/api` → produced
+     `https://grokipedia.com/full-text-search` instead of `…/api/full-text-search`
+     (spec §5 + SearXNG). The httptest + buildRequestURL tests asserted the wrong
+     path, so they passed while the code was broken (would 404 live). Fixed by
+     making `apiBase` the host origin and `base.Path` the full `/api/full-text-search`
+     (the author's intended base+path design, corrected); tests fixed to assert
+     `/api/full-text-search`. Verified empirically + via the live test.
+  2. **Missing html→text on snippet (spec deviation).** Spec §5 says "(html→text
+     on snippet)" and SearXNG applies `html_to_text(item["snippet"])`; the impl
+     only `TrimSpace`d → HTML would leak into snippets. Added a `<[^>]*>` tag
+     stripper (same approach as the stackexchange engine) + a golden test.
+  3. **No live test (de-risker).** Added gated `TestSearch_Live` (MST_ITEST=1,
+     §14) — the gate that would have caught #1. Verified green: 10 real results,
+     correct `/page/<slug>` URLs (slug `Go!_(…)` → `Go%21_%28…%29`), clean snippets.
+- **Other (accepted as-is):** `offset` param intentionally omitted (mst applies
+  offset post-merge per §9, like single-page ddg); `limit` capped at 100
+  (unverified the API honors >10 — SearXNG always sends 10 + paginates; the live
+  test sends limit=10 so this stays untested, low risk for an off-by-default
+  engine); weight 1.0 (undocumented but reasonable for a disabled engine);
+  retry coverage thinner than peers (only 429-succeeds + exhausted).
+- **Status:** accepted — folded into the engine + tests; TASKS.md B.1.5 block
+  de-garbled. No spec change needed (impl now matches §5).
+
+## 2026-07-09 — ddg UA rotation (pulls forward §18)
+- **Context:** §18 listed "scrape-UA rotation" as deferred, and the 2026-07-09
+  ddg redesign used a single static browser UA. The user requested rotating
+  "spoofed" browser UAs (like a browsing user) picked at random.
+- **Decision:** Implement UA rotation now. `ddg` picks one realistic browser UA
+  per `Search()` call, uniformly at random from `browserUAs` (a pool of common
+  browser/OS combinations), so requests distribute across DDG's per-UA
+  reputation buckets rather than pinning one identity. The pick is **per query**
+  (not per HTTP request) so a future `vqd` multi-page sequence stays valid
+  (`vqd` is derived from query+UA; docs/DDG-research.md). Page-1-only today, so
+  cross-request stability isn't currently required. `SetUASelector` provides a
+  deterministic test hook.
+- **Rationale:** Rotation avoids a single throttleable/fingerprintable UA
+  identity while still presenting a realistic browser to DDG's bot blocker.
+- **Status:** accepted — folded into spec §12 (carve-out now "rotated at random
+  from a pool"), §5 (ddg note + access notes), §18 (scrape-UA rotation no longer
+  deferred; only `MST_USER_AGENT` user-configurability remains deferred).
+
+## 2026-07-09 — DDG redesigned to SearXNG mechanism; §12 scrape-UA carve-out
+- **Context:** §12 mandated an honest `mst/<version>` User-Agent for *all*
+  engines, and §5's DDG note said "`mst` sends only an identifying `User-Agent`".
+  But the A.2.1 `ddg` implementation **already violated §12** — it sent a
+  spoofed Chrome UA plus full browser headers, with no logged decision. Research
+  (`docs/DDG-research.md`, distilled from SearXNG `engines/duckduckgo.py`)
+  confirmed *why*: DDG's no-JS html endpoint bot-blocks identifying/non-browser
+  UAs (returns an anomaly/CAPTCHA page with zero results) and requires a static
+  browser UA + `Sec-Fetch-*`/`Referer` headers + form POST. The honest-UA policy
+  and a functional DDG scrape are mutually exclusive. The prior
+  "DDG real-world selector/URL fidelity unverified" entry (2026-07-08) flagged
+  the guessed selectors and missing live test as the gate before promoting DDG.
+- **Decision:** User chose "make it work" via the SearXNG mechanism.
+  1. **§12 carve-out:** scrape engines may send a static browser UA + browser
+     `Sec-Fetch-*`/`Referer` headers; structured-API engines keep
+     `mst/<version>`. Scoped precisely: `ddg` uses the browser UA (verified);
+     `mojeek` keeps the honest UA for now (scrape-tolerant, unchanged).
+  2. **`ddg` reimplemented (SearXNG-faithful):** form **POST** to
+     `html.duckduckgo.com/html/` with body `q=&b=&kl=wt-wt` (page 1), static
+     browser UA + `Sec-Fetch-Dest: document` / `Sec-Fetch-Mode: navigate` /
+     `Sec-Fetch-Site: same-origin` / `Sec-Fetch-User: ?1` / `Referer`.
+     Selectors corrected to the reverse-engineered ones: container
+     `#links > div[class~=web-result]`, url+title `h2 > a`, snippet
+     `a.result__snippet`. CAPTCHA (`<form id="challenge-form">`) is detected
+     post-fetch and surfaced as `ErrCaptcha` (not silent zero results, and not
+     retried — retrying won't clear it and may worsen IP reputation). Queries
+     ≥500 chars are skipped (DDG rejects them). The `uddg=` redirect is unwrapped.
+     **Single page only** — the `vqd` token required for page 2+ (extracted from
+     the page-1 response, cached per query+UA) is a documented follow-up; a
+     single page yields ~10–15 results, which the ranker handles gracefully.
+  3. **`MST_ITEST=1` live test added** (`TestSearch_Live`, §14) and **verified
+     green**: 10 real results, selectors confirmed against live markup, URLs
+     clean/unwrapped. This resolves the 2026-07-08 "fidelity unverified" entry.
+     The full binary path also verified (`mst --engine ddg "go concurrency"` →
+     10 ranked results, exit 0).
+- **Rationale:** Honest UA makes DDG non-functional; browser simulation is the
+  established approach (SearXNG). Surfacing CAPTCHA as an error turns silent
+  failures into transparent ones. The live test is the real de-risking gate the
+  prior decision required.
+- **Status:** accepted — folded into spec §12 (scrape-UA carve-out), §5 (DDG
+  note + access notes), §18 (UA deferral wording). Resolves the 2026-07-08
+  "DDG fidelity unverified" entry (now marked resolved below).
+
+## 2026-07-08 — HN Algolia hits without URL use objectID fallback
+- **Context:** The HN Algolia API returns `url` for most hits, but some (especially
+Show HN posts or deleted items) may have an empty `url`. Each hit always has
+an `objectID` which corresponds to the HN story/item ID.
+- **Decision:** When `url` is empty and `objectID` is non-empty, construct the
+URL as `https://news.ycombinator.com/item?id=<objectID>`. If both are empty,
+skip the hit.
+- **Rationale:** Ensures every valid HN hit produces a usable result URL even
+when Algolia doesn't include a direct link. The HN item page is always
+accessible via this convention.
+- **Status:** accepted — implemented in Sprint B.1.4.
+
+## 2026-07-08 — Stack Exchange body strips HTML tags
+- **Context:** The Stack Exchange API returns the `body` field as raw HTML
+(e.g., `<p>Goroutines are lightweight threads managed by the Go runtime.</p>`).
+Other engines (arxiv, pubmed) return plain text in their metadata fields.
+- **Decision:** Use a simple regex-based HTML tag stripper (`<[^>]*>`) in
+`stripNewlines` to produce clean plain-text snippets. This is sufficient for
+the snippet field — full HTML-to-text conversion is deferred.
+- **Rationale:** The snippet is consumed by an LLM or displayed in text output;
+raw HTML tags add noise without adding value. A simple regex strip is fast,
+stateless, and handles the common tag patterns in Stack Exchange answers.
+- **Status:** accepted — implemented in Sprint B.1.3.
+
+## 2026-07-08 — PubMed esummary uses lowercase element names
+- **Context:** The NCBI E-utilities esummary endpoint returns XML with lowercase
+element names (e.g., `<title>` not `<Title>`, `<source>` not `<Source>`), unlike
+the arXiv Atom feed which uses PascalCase. This is a documented NCBI convention.
+- **Decision:** Use lowercase XML tags in the Go structs (`xml:"title"`,
+`xml:"source"`, `xml:"pubdate"`) to match PubMed's actual response format.
+The esearch endpoint uses uppercase `<IdList>`, `<Id>` (matching arXiv style).
+- **Rationale:** PubMed's API is well-documented and stable; matching the exact
+element casing ensures correct deserialization.
+- **Status:** accepted — implemented in Sprint B.1.2.
+
+## 2026-07-08 — arXiv engine uses Atom XML (not JSON)
+- **Context:** The spec §5 lists `arxiv` as a "free API" for CS/physics/math
+  papers. Unlike `wikipedia` and other Tier B engines that return JSON, the arXiv
+  API returns Atom XML (`export.arxiv.org/api/query`). The spec's access notes
+  (§5) say "JSON-API engines" include arXiv but the actual API is Atom XML.
+- **Decision:** Parse as Atom XML using Go's `encoding/xml`. Map `<id>` → URL
+  (`https://arxiv.org/abs/<id>`), `<title>` → title, `<summary>` → snippet. The
+  `--raw` path returns the decoded XML structure. This is consistent with how
+  other XML-returning APIs (e.g., PubMed) will be handled.
+- **Rationale:** arXiv's API is well-documented and stable; Atom XML parsing is
+  straightforward with Go's stdlib. The `--raw` path still works — it just
+  returns an XML-decoded structure rather than a JSON map.
+- **Status:** accepted — implemented in Sprint B.1.1.
+
 ## 2026-07-07 — Config discovery uses MST_CONFIG_HOME, not XDG_CONFIG_HOME
 - **Context:** SPEC §6 specified config discovery as
   `$XDG_CONFIG_HOME/mst/config.yaml` (fallback `~/.config/mst/config.yaml`).
@@ -84,7 +301,27 @@ Entry template:
   Rationale: keeps A.0.2 to its DoD (the merged path) while never silently
   ignoring a documented flag. (`--raw --format text|table|jsonl` is already exit 2
   per §10; only the `--raw --format json` path is deferred.)
-  **Status:** accepted (in-plan deferral; TASKS.md A.2.x will cover it).
+  **Status:** accepted — `--no-merge` implemented in A.2.2 (skip ranking; emit
+  per-engine native-order groups with `engine` field, no score/rank). `--raw`
+  implemented in A.2.2 (per-engine raw payloads via `RawEngine` interface +
+  `DispatchRaw`; all 4 engines implement it).
+
+## 2026-07-08 — `--no-merge` and `-q`/`--query` implemented
+- **Context:** DECISIONS (c) deferred `--no-merge` and `--raw` to A.2.x; the
+  `-q`/`--query` flag was documented in §4 but not yet reflected here as an
+  accepted decision. Both are now shipped in Sprint A.2.2.
+- **Decision (`--no-merge`):** Implemented per §10 — skip ranking/dedup, emit
+  results grouped per-engine in native order with an `engine` field, no
+  `score`/`rank`. Works with json/jsonl/text. `--offset` is a no-op (with `-v`
+  notice). Composition: `--raw --no-merge` accepted but is a no-op (`--raw`
+  implies `--no-merge`).
+- **Decision (`-q`/`--query`):** Registered as a `StringVarP` flag. Query can
+  come from `-q`/`--query`, positional args, or `--stdin` — but only one source
+  at a time (mutual exclusion enforced). Conflicts → exit 2.
+- **Rationale:** Both raise the bar for "taggable" v0.1; `--no-merge` is a
+  clean in-scope feature, `-q` closes the last Tier 1 deviation from §4.
+- **Status:** accepted — both implemented in A.2.2; no spec change needed
+  (conforms to §4/§10).
 - **(d) `--format table` deferred to v0.2 (§16).** Decision: in v0.1 `table`
   surfaces a clear exit-2 "planned for v0.2" error. Spec-conforming (§16 schedules
   `table` for v0.2).
@@ -193,8 +430,12 @@ Entry template:
   scrape engine without a live integration test is consistent with the spec.
   Logging it here so it is tracked when DDG's reliability is next evaluated
   (§18 lists `ddg`/`mojeek` scrape viability under monitoring).
-- **Status:** proposed (risk recorded; no spec change yet — re-evaluate at the
-  v0.2/`table` sprint or whenever `ddg` access is next touched).
+- **Status:** resolved 2026-07-09 — `ddg` reimplemented via the SearXNG
+  mechanism with the confirmed selectors (`#links > div[class~=web-result]`,
+  `h2 > a`, `a.result__snippet`), `uddg=` unwrapping, CAPTCHA detection, and an
+  `MST_ITEST=1` live test that returned 10 real results. See the 2026-07-09
+  DDG-redesign entry above; spec §5 access notes now carry the confirmed
+  selectors. (Originally proposed 2026-07-08: risk recorded; no spec change yet.)
 
 ## 2026-07-08 — `-q`/`--query` flag implemented (spec deviation resolved)
 
@@ -236,20 +477,8 @@ Entry template:
     without searching" — it is an introspection command and should not hard-fail
     on a typo; the run-time `--engine`/`--exclude`/`--require` exit-2 validation
     still guards actual searches.
-- **Question (part 2 — remaining v0.1 items, OPEN):** `--no-merge` (§10),
-  `--raw` (§10), and §4's "`--help` groups flags by these tiers" are v0.1-scope
-  per §16/§4 but are each non-trivial and not in A.2.2's literal DoD:
-    - `--no-merge`: tractable (skip ranking; emit per-engine native-order groups
-      with an `engine` field, no score/rank). Medium effort, no engine changes.
-    - `--raw`: needs engines to expose their pre-`Result` native payload — an
-      `Engine` interface change touching all 4 engines + their tests. Large.
-    - `--help` tier grouping: custom pflag usage rendering. Small-medium.
-  Should these land in A.2.2 (so v0.1 ships them), or should v0.1 tag with them
-  re-deferred (keeping their current exit-2 "not yet implemented" guards for
-  `--raw`/`--no-merge`) and tracked for a fast-follow?
-  **Recommendation:** do `--no-merge` + `--help` tier grouping now (clean,
-  in-scope, raise the bar for "taggable"), and re-defer `--raw` to its own
-  sprint since it requires the Engine-interface change and is a tier-3 debug
-  mode with low v0.1 ROI.
-- **Status:** part 1 accepted (implemented; no spec change needed — conforms to
-  §4). Part 2 proposed (awaiting decision).
+- **Decision (part 2 — remaining v0.1 items, resolved):** `--no-merge` (§10)
+  and `--raw` (§10) implemented in A.2.2; `-q`/`--query` (§4) registered.
+  `--help` tier grouping implemented in A.2.2. All are now shipped — no
+  remaining A.2.2 blockers.
+- **Status:** resolved — all items implemented in A.2.2; no spec change needed.

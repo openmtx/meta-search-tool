@@ -5,8 +5,37 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier A, Stage 2 → Sprint A.2.2 (hardening) — fuzz/property tests +
-  `--list-engines` done; `--no-merge`/`--raw`/`--help`-grouping scope decision OPEN
+- **Active:** Tier B, Stage 1 → Sprint B.1.6 (table format + E2E integration tests) — next
+  (Sprint B.3.1 — engine categories & aliases — added after Stage 2 hardening)
+- **Last:** 2026-07-09 — arxiv AND-term query fix: arXiv OR'd multi-word queries
+  (`all:a b` → `all:a OR all:b`), flooding noise that crowded ddg out of top-20.
+  Fixed by AND-ing terms. Live-verified: out-of-domain → 0 (no flood), in-domain
+  → precise; Haaland query top-20 now `10 mojeek + 10 ddg` (was `+10 arxiv noise`).
+  361 tests green (-race) + 6 live skips (arxiv live test added).
+- **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
+  §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
+  default set now has 2 keyless general-web engines. 361 tests green (-race);
+  live default query confirms ddg runs without `-e`.
+- **Last:** 2026-07-09 — fixed 3 live-only engine bugs (hackernews/pubmed/stackexchange;
+  all shared the `base.Path`-replace anti-pattern that hit grokipedia) + bumped
+  ddg weight 0.5→1.0. All 5 keyless engines now carry `MST_ITEST=1` live tests,
+  all green. 361 tests green (-race) + 5 live skips. Re-ran the misspelled
+  all-engines query: pubmed/ddg returned the relevant Korean-cholesterol papers.
+- **Last:** 2026-07-09 — grokipedia review fixes: corrected a critical API-path
+  bug (dropped `/api` segment, masked by its own tests → would 404 live), added
+  html→text snippet stripping (§5), added gated `TestSearch_Live` (MST_ITEST=1,
+  **green** — 10 real results). 360 tests green (-race) + 2 live skips.
+- **Last:** 2026-07-09 — Sprint B.1.5: `grokipedia` engine (keyless JSON API)
+- **Last:** 2026-07-09 — ddg UA rotation: replaced the single static browser UA
+  with a pool (`browserUAs`) + per-query random pick (§12; pulls forward §18);
+  `SetUASelector` test hook + `TestUASelection`. 342 tests green (-race);
+  `MST_ITEST=1` live test green (random pool UA, 10 results).
+- **Next:** Sprint B.1.5 — implement `grokipedia` engine (keyless JSON API)
+- **Last:** 2026-07-09 — DDG redesign (interlude): `ddg` reimplemented via the
+  SearXNG mechanism (POST no-JS form, browser UA + Sec-Fetch/Referer, confirmed
+  selectors, CAPTCHA detection); §12 scrape-UA carve-out + §5 access notes
+  updated; `MST_ITEST=1` live test **green** (10 real results). 341 tests green
+  (-race). Next planned sprint still B.1.5.
 - **Last:** 2026-07-08 — A.2.2 partial: fuzz/property tests for canonicalization +
   RRF (§14) + full `--list-engines` output (§4). 241 tests green (-race).
 - **Next:** decide the remaining v0.1-scope items (DECISIONS 2026-07-08 part 2);
@@ -18,7 +47,361 @@
 - **Next:** Stage 2 — Sprint A.2.2 hardening: fuzz/property tests, `--list-engines`,
   exit/format polish → v0.1
 
+## 2026-07-09 — Sprint B.1.5: `grokipedia` (keyless JSON API)
+
+The fifth Tier B knowledge engine: Grokipedia's free full-text search JSON API.
+
+- **Done:**
+  - `internal/engine/grokipedia/grokipedia.go` — Grokipedia API client
+    - HTTP GET to `https://grokipedia.com/api/full-text-search` with params:
+      `query`, `limit` (capped at 100, floored at 1)
+    - Parses JSON response `{results:[{slug,title,snippet}]}` into `[]engine.Result`
+    - Maps: `slug` → URL (`https://grokipedia.com/page/<slug>`), `title` → title,
+      `snippet` → snippet
+    - `buildRequestURL`: sets `query`, `limit` (capped at 100, floored at 1)
+    - Retry policy (§11): via shared `internal/engine/retry` package
+    - Implements `RawEngine` (`SearchWithRaw`) for `--raw` support
+    - **Enabled: false** — SearXNG marks grokipedia `inactive` (experimental)
+  - `internal/engine/grokipedia/grokipedia_test.go` — 17 tests:
+    - **Descriptor:** Name/keyed=false/DefaultWeight=1.0/Enabled=false
+    - **Golden-table parse:** Normal (2 results), empty, missing-slug,
+      missing-title, malformed JSON
+    - **httptest round-trip:** Verifies GET, path `/full-text-search`, parses
+      fixture JSON into `[]Result`
+    - **SearchWithRaw:** Returns both results and decoded raw response
+    - **Error paths:** Context cancelled, HTTP 502, malformed JSON
+    - **buildRequestURL:** 3 cases (normal, cap at 100, floor at 1)
+    - **Retry:** 429 succeeds on retry, exhausted retries
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **17 packages, 358 tests green** (was 341,
+    +17: grokipedia tests)
+  - `/tmp/mst --list-engines` → shows `grokipedia` with status `disabled`
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.6 — `table` format + E2E integration tests
+
 ## Log
+
+## 2026-07-09 — arxiv AND-term fix + Sprint B.3.1 (engine categories) added
+
+A live query revealed arxiv's `all:<query>` construction OR's terms (per arxiv
+API behavior, also confirmed in SearXNG's arxiv.py which does the same thing),
+flooding general-web queries with loosely-matched ERL physics papers. The fix
+ANDs the terms so an out-of-domain query honestly yields ~0 results instead of
+30 noise papers. Categories/profiles (spec §17.3) will further protect against
+this by scoping arxiv to `--engine academic` only — added Sprint B.3.1 to
+implement engine group aliases.
+
+- **Done:**
+  - `internal/engine/arxiv/arxiv.go`: `buildRequestURL` now joins terms with
+    ` AND ` instead of passing the raw query to arxiv's `all:` prefix.
+  - `internal/engine/arxiv/arxiv_test.go`: `wantQ` values updated to AND form;
+    gated `TestSearch_Live` added (in-domain returns results, out-of-domain ≤5).
+  - `TASKS.md`: added Stage 3 / Sprint B.3.1 (engine categories & aliases)
+    between Tier B Stage 2 and Tier C.
+  - DECISIONS entry noting SearXNG parity (same `all:<q>` pattern) and that
+    our AND fix is an mst-specific optimization for on-by-default architecture.
+- **Verified:** `go test -race -count=1 ./...` → 361 PASS, 6 SKIP (arxiv live
+  test added to the 6); `MST_ITEST=1 arxiv TestSearch_Live` → in-domain:
+  precise results, out-of-domain: 0 noise; Haaland query top-20 went from
+  `10 mojeek + 10 arxiv` to `10 mojeek + 10 ddg`.
+- **Files:** arxiv.go, arxiv_test.go, TASKS.md, DECISIONS.md, PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.6 (`table` format + E2E), then B.3.1 (engine categories).
+
+## 2026-07-09 — ddg enabled by default (overturns §17.3)
+
+User decision after live testing showed ddg reliable while mojeek gets 403-blocked.
+
+- **Done:**
+  - `internal/engine/ddg/ddg.go`: `Enabled: false` → `true`; package doc updated.
+  - `internal/engine/ddg/ddg_test.go`: TestDescriptor expects Enabled true.
+  - `cmd/mst/main_test.go`: `listReg()` disabled-status example swapped from
+    ddg → grokipedia (the engine still off by default); `TestRun_DDG_OffByDefault`
+    repurposed → `TestRun_DDG_OnByDefault` (ddg runs without `-e`, mocked server);
+    E2E comment updated.
+  - **Spec:** §5 Mojeek note (now 2 keyless general-web engines), Tier C table
+    ("On by default"), DDG note (rationale overturned), §6 config `enabled: true`,
+    §16 roadmap, §17.3.
+  - DECISIONS entry (overturns prior accepted decision).
+- **Verified:** `gofmt -l .` empty; `go vet`/`go build` clean;
+  `go test -race -count=1 ./...` → **361 tests green** (-race);
+  `--list-engines` → ddg `enabled:true ready`; live default query (no `-e`)
+  → ddg runs (count=10), top result "Erling Haaland's insane diet…".
+- **Files:** ddg.go/test, cmd/mst/main_test.go, docs/SPEC.md, DECISIONS.md,
+  PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.6 (`table` format + E2E), or implement `tavily` (Tier D,
+  free tier confirmed).
+
+## 2026-07-09 — Fix 3 live engine bugs (pubmed/hackernews/stackexchange) + ddg weight 1.0
+
+A live all-engines query exposed that 3 "complete" engines failed against their
+real endpoints (httptest-green, live-broken) — the same `base.Path`-replace
+anti-pattern that hit grokipedia. Plus ddg weight bumped per user request.
+
+- **Done:**
+  - **hackernews:** `apiBase` host-only + `Path=/api/v1/search` (was `/search`, 404);
+    test path assertions + apiBase overrides fixed; live test added.
+  - **pubmed:** paths `/entrez/eutils/esearch.fcgi` + `/entrez/eutils/esummary.fcgi`
+    (was 404). esearch stays XML (dropped `retmode=json`); **esummary switched
+    XML→JSON** — the `<ArticleSet>` struct never matched live; new JSON
+    `esummaryResponse{Result map[string]json.RawMessage}` + `docs()` + `parseResults([]esummaryDoc)`.
+    Full test rewrite (JSON fixtures, `[]esummaryDoc` parse tests, path
+    assertions); live test added.
+  - **stackexchange:** `/2.3/search/advanced` (was versionless), `filter=withbody`
+    (was invalid `!*236cL9uK5*(T6` → 400), `pagesize` (was `maxcount`). Test
+    assertions fixed; live test added.
+  - **ddg:** `DefaultWeight` 0.5→1.0 (descriptor + test + spec §6 config example).
+  - DECISIONS entry (recurring `base.Path` pattern, per-engine fixes, ddg weight).
+- **Verified:** `gofmt -l .` empty; `go vet`/`go build` clean;
+  `go test -race -count=1 ./...` → **361 tests green** + 5 SKIP (live);
+  `MST_ITEST=1 TestSearch_Live` green for pubmed/hackernews/stackexchange/ddg/grokipedia.
+  Re-ran the all-engines misspelled query: pubmed ok(count=2), hackernews/stackexchange
+  ok(count=0, expected), ddg ok(count=10) — ddg found the relevant Korean-cholesterol/
+mortality papers (incl. "…in Korean adults") despite the "cholestral" typo.
+- **Files:** pubmed.go/test, hackernews.go/test, stackexchange.go/test, ddg.go/test,
+  docs/SPEC.md, DECISIONS.md, PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** commit; Sprint B.1.6 (`table` format + E2E).
+
+## 2026-07-09 — Sprint B.1.5 review fixes (grokipedia)
+
+Reviewed the grokipedia engine (implemented by a concurrent session, uncommitted)
+against spec §5 + SearXNG `engines/grokipedia.py`. Found & fixed:
+
+- **Done:**
+  - **C1 path bug:** `buildRequestURL` dropped the `/api` segment (`base.Path =
+    "/full-text-search"` on `apiBase="…/api"` — `url.Path` replaces, not
+    appends → produced `grokipedia.com/full-text-search`). Tests asserted the
+    wrong path, so passed while broken. Fixed: `apiBase` = host origin,
+    `base.Path = "/api/full-text-search"`; both path assertions fixed.
+  - **D1 html→text:** added `<[^>]*>` snippet stripper (§5 "html→text on snippet";
+    matches stackexchange) + `TestParseResults_HTMLSnippet`.
+  - **G1 live test:** added gated `TestSearch_Live` (MST_ITEST=1).
+  - **H1/H2:** de-garbled the duplicated TASKS.md B.1.5 block; added DECISIONS
+    entry; corrected test counts (358→360).
+- **Verified:** `gofmt -l .` empty; `go vet`/`go build` clean;
+  `go test -race -count=1 ./...` → 16 packages, **360 tests green** (+1 vs 359)
+  + 2 SKIP (ddg/grokipedia live); `MST_ITEST=1 TestSearch_Live` → 10 real
+  results, correct `/page/<slug>` URLs (`Go!_(…)` → `Go%21_%28…%29`), clean
+  snippets; `--list-engines` shows `grokipedia` `enabled:false weight:1 disabled`.
+- **Files changed:** `internal/engine/grokipedia/grokipedia.go`,
+  `grokipedia_test.go`, `TASKS.md`, `DECISIONS.md`, `PROGRESS.md`.
+- **Left (minor, per review):** G2 `limit>10` unverified (low risk, off-by-
+  default engine); G3 retry coverage thinner than peers.
+- **Blocked on:** nothing
+- **Next:** commit B.1.5 (engine + fixes), then Sprint B.1.6 (`table` format).
+
+## 2026-07-09 — ddg UA rotation (pulls forward §18)
+
+Follow-up to the ddg redesign: replace the single static browser UA with a
+rotating pool, per the user's request ("spoofed UA like a user is browsing").
+
+- **Done:**
+  - `internal/engine/ddg/ddg.go`: replaced `const ddgUA` with `browserUAs`
+    (6 realistic desktop UAs: Chrome/Firefox/Safari/Edge across Windows/macOS/
+    Linux) + `uaSource` (default: uniform random pick) + `SetUASelector` test
+    hook. `fetch` picks `ua := uaSource()` once per Search call and reuses it
+    for the request (forward-compatible with a future `vqd` multi-page sequence,
+    which must reuse the same UA across a query's pages — vqd is query+UA-bound).
+  - `internal/engine/ddg/ddg_test.go`: `TestSearch_Httptest` pins the UA via
+    `SetUASelector` for a deterministic assertion; new `TestUASelection`
+    (default selector returns a pool member; override + restore works).
+  - **Spec:** §12 (carve-out now "rotated at random from a pool"); §5 (ddg note
+    + access notes); §18 (scrape-UA rotation no longer deferred — only
+    `MST_USER_AGENT` user-configurability remains deferred).
+- **Verified:** `gofmt -l .` empty; `go vet`/`go build` clean;
+  `go test -race -count=1 ./...` → 16 packages, **342 tests green** (+1
+  TestUASelection); `MST_ITEST=1 TestSearch_Live` → 10 real results with a
+  random pool UA.
+- **Files changed:** `internal/engine/ddg/ddg.go`, `ddg_test.go`, `docs/SPEC.md`.
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.5 — `grokipedia`
+
+## 2026-07-09 — DDG redesign: SearXNG mechanism + §12 scrape-UA carve-out
+
+Interlude sprint (user request): make `ddg` actually work by following
+SearXNG's mechanism (`docs/DDG-research.md`).
+
+- **Done:**
+  - `internal/engine/ddg/ddg.go` — rewritten:
+    - **Method:** form **POST** to `https://html.duckduckgo.com/html/`
+      (`application/x-www-form-urlencoded`), body `q=<q>&b=&kl=wt-wt` (page 1)
+    - **Headers (browser simulation):** static desktop UA + `Sec-Fetch-Dest:
+      document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: same-origin`,
+      `Sec-Fetch-User: ?1`, `Referer: https://html.duckduckgo.com/html/`,
+      `Accept-Language` (no `Accept-Encoding` — let stdlib auto-decompress)
+    - **Selectors (reverse-engineered, confirmed live):** container
+      `#links div[class*=web-result]`; url+title `h2 a`; snippet `a.result__snippet`
+    - **CAPTCHA detection:** `<form id="challenge-form">` → `ErrCaptcha`
+      (post-fetch, not retried; surfaces as `ok:false` in the engines block)
+    - **Query guard:** ≥500 chars → skip (no results, no error), matching SearXNG
+    - **`uddg=` redirect unwrap:** `//duckduckgo.com/l/?uddg=<enc>` → real URL
+    - **Single page** only; `vqd`-based page 2+ deferred (documented follow-up)
+    - Retry (§11) via shared `internal/engine/retry`; `SearchWithRaw` retained
+  - `internal/engine/ddg/ddg_test.go` — rewritten: 20 tests (was 13): descriptor,
+    golden parse (normal/empty/no-results/uddg-unwrap/captcha), httptest
+    round-trip (verifies POST, Content-Type, form body q/b/kl, browser headers),
+    CAPTCHA-surfaces, query-too-long skip, buildRequestBody (2), error paths
+    (cancelled/404), retry (429/5xx/exhausted/cancel-during-backoff/non-retryable),
+    SearchWithRaw, + gated `TestSearch_Live` (MST_ITEST=1)
+  - `cmd/mst/main_test.go` — `TestRun_DDG_E2E` fixture updated to the new markup
+  - **Spec:** §5 DDG note (POST + browser headers + CAPTCHA + single-page); §5
+    access notes (new `ddg` bullet with selectors/mechanics); §12 (scrape-UA
+    carve-out — `ddg` browser UA, `mojeek` keeps honest); §18 (UA wording)
+  - **DECISIONS.md:** new 2026-07-09 entry; prior "fidelity unverified" entry
+    marked resolved
+- **Verified:**
+  - `gofmt -l .` — empty; `go vet ./...` — clean; `go build ./...` — ok
+  - `go test -race -count=1 ./...` → **16 packages, 341 tests green** (was 337,
+    +4 net: ddg 13→20 = +7, cmd/mst E2E fixture fix, −3 from removed old tests)
+  - `MST_ITEST=1 go test -run TestSearch_Live ./internal/engine/ddg/` → **PASS**:
+    10 real results, first `"The Go Programming Language" <https://go.dev/>`,
+    selectors confirmed against live markup, URLs clean (no `uddg=`/`/l/`)
+  - Binary smoke: `/tmp/mst --engine ddg --limit 5 "go concurrency"` → exit 0,
+    10 ranked results, `engines.ddg.ok=true count=10`, sources derived correctly
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.5 — `grokipedia` (next planned Tier B engine). DDG
+  `vqd`/multi-page is a documented follow-up (DECISIONS 2026-07-09).
+
+## 2026-07-08 — Sprint B.1.4: `hackernews` (keyless Algolia API)
+
+The fourth Tier B knowledge engine: Hacker News Algolia Search API, returning
+structured JSON for HN stories.
+
+- **Done:**
+  - `internal/engine/hackernews/hackernews.go` — Hacker News Algolia Search API client
+    - HTTP GET to `https://hn.algolia.com/api/v1/search` with params: `query`,
+      `tags=story`, `hitsPerPage`
+    - Parses JSON response into `[]engine.Result`
+    - Maps: `title` → title, `url` → URL (or constructed from `objectID` via
+      `https://news.ycombinator.com/item?id=<id>`), snippet = date + points
+    - `buildRequestURL`: sets `query`, `tags=story`, `hitsPerPage` (capped at
+      1000, floored at 1)
+    - Retry policy (§11): via shared `internal/engine/retry` package
+  - `internal/engine/hackernews/hackernews_test.go` — 17 tests:
+    - **Descriptor:** Name/keyed=false/DefaultWeight=0.8/Enabled=true
+    - **Golden-table parse:** Normal (2 results), empty, missing-URL,
+      missing-title, construct-URL-from-objectID, malformed JSON
+    - **httptest round-trip:** Verifies headers, parses fixture JSON into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 502, malformed JSON
+    - **buildRequestURL:** 3 cases (normal, cap at 1000, floor at 1)
+    - **Retry:** 429 succeeds on retry, exhausted retries
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **15 packages, 337 tests green** (was 320,
+    +17: +17 hackernews tests)
+  - `/tmp/mst --list-engines` → shows `hackernews` with status `ready`
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.5 — `grokipedia`
+
+## 2026-07-08 — Sprint B.1.3: `stackexchange` (keyless Stack Exchange API)
+
+The third Tier B knowledge engine: Stack Exchange Search API, returning structured
+JSON with HTML body content.
+
+- **Done:**
+  - `internal/engine/stackexchange/stackexchange.go` — Stack Exchange Search API client
+    - HTTP GET to `https://api.stackexchange.com/2/search/advanced`
+    - Parses JSON response into `[]engine.Result`
+    - Maps: `question_id` → URL (`https://stackoverflow.com/questions/<id>`),
+      `title` → title, `link` → URL, `body` → snippet (HTML tag stripped)
+    - `buildRequestURL`: sets `q`, `site=stackoverflow`, `order=desc`,
+      `sort=relevance`, `maxcount` (capped at 100, floored at 1)
+    - Retry policy (§11): via shared `internal/engine/retry` package
+    - HTML tag stripping in `stripNewlines` — Stack Exchange body is raw HTML
+  - `internal/engine/stackexchange/stackexchange_test.go` — 16 tests:
+    - **Descriptor:** Name/keyed=false/DefaultWeight=1.0/Enabled=true
+    - **Golden-table parse:** Normal (2 results), empty, missing-link, missing-title,
+      malformed JSON
+    - **httptest round-trip:** Verifies headers, parses fixture JSON into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 502, malformed JSON, API error response
+    - **buildRequestURL:** 3 cases (normal, cap at 100, floor at 1)
+    - **Retry:** 429 succeeds on retry, exhausted retries
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **14 packages, 320 tests green** (was 303,
+    +17: +16 stackexchange tests + 1 from wiring into main)
+  - `/tmp/mst --list-engines` → shows `stackexchange` with status `ready`
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.4 — `hackernews`
+
+## 2026-07-08 — Sprint B.1.2: `pubmed` (keyless E-utilities API)
+
+The second Tier B knowledge engine: PubMed's NCBI E-utilities API, which uses
+a two-step XML flow (esearch → esummary).
+
+- **Done:**
+  - `internal/engine/pubmed/pubmed.go` — PubMed E-utilities API client
+    - HTTP GET to `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi`
+      with params: `db=pubmed`, `term=<q>`, `retmax=<limit>`, `retmode=json`
+    - HTTP GET to `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi`
+      with params: `db=pubmed`, `id=<comma-separated-PMIDs>`, `retmode=json`
+    - Parses XML responses into `[]engine.Result`
+    - Maps `<Id>` → PubMed URL (`https://pubmed.ncbi.nlm.nih.gov/<id>/`)
+    - Extracts: `<title>` → title, `<Source>` + `<PubDate>` → snippet
+    - `buildSearchURL`: sets `term`, `db=pubmed`, `retmax` (capped at 10000,
+      floored at 1)
+    - `buildSummaryURL`: joins PMIDs with commas for the `id` param
+    - Retry policy (§11): via shared `internal/engine/retry` package
+  - `internal/engine/pubmed/pubmed_test.go` — 17 tests:
+    - **Descriptor:** Name/keyed=false/DefaultWeight=1.2/Enabled=true
+    - **Golden-table parse:** Normal (2 results), empty, missing-id, missing-title,
+      malformed XML
+    - **httptest round-trip:** Verifies esearch path + esummary path, parses
+      fixture XML into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 502, malformed XML, esearch returns empty
+    - **buildSearchURL:** 3 cases (normal, cap at 10000, floor at 1)
+    - **buildSummaryURL:** Verifies path, db, id params
+    - **Retry:** 429 succeeds on retry, exhausted retries
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **14 packages, 303 tests green** (was 276,
+    +27: +17 pubmed tests + 10 from wiring into main)
+  - `/tmp/mst --list-engines` → shows `pubmed` with status `ready`
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.3 — `stackexchange`
+
+## 2026-07-08 — Sprint B.1.1: `arxiv` (keyless Atom XML API)
+
+The first Tier B engine: keyless structured API that returns Atom XML.
+
+- **Done:**
+  - `internal/engine/arxiv/arxiv.go` — arXiv API client
+    - HTTP GET to `https://export.arxiv.org/api/query`
+    - Parses Atom XML response into `[]engine.Result`
+    - Extracts: `<id>` → URL (`https://arxiv.org/abs/<id>`), `<title>`, `<summary>`
+    - `buildRequestURL`: sets `search_query=all:<q>`, `start=0`, `max_results` (capped at 3000, floored at 1)
+    - Retry policy (§11): via shared `internal/engine/retry` package
+  - `internal/engine/arxiv/arxiv_test.go` — 14 tests:
+    - **Descriptor:** Name/keyed=false/DefaultWeight=1.2/Enabled=true
+    - **Golden-table parse:** Normal (2 results), empty, missing-alternate-link
+    - **httptest round-trip:** Verifies headers, parses fixture XML into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 502, malformed XML
+    - **buildRequestURL:** 3 cases (normal, cap at 3000, floor at 1)
+    - **Retry:** 429 succeeds on retry, exhausted retries
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **13 packages, 276 tests green** (was 262, +14)
+  - `/tmp/mst --list-engines` → shows `arxiv` with status `ready`
+- **Blocked on:** nothing
+- **Next:** Sprint B.1.2 — `pubmed`
 
 ## 2026-07-08 — Sprint A.2.2 (partial): fuzz/property tests + `--list-engines`
 

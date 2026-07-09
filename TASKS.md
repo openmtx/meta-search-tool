@@ -38,116 +38,187 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 > **v0.1 ships when** Tier A (foundation + engines) + `wikipedia` (Tier B) +
 > `ddg` (Tier C, off by default) + hardening are done (§16).
 
-> ### ▶ Now working on: Tier A, Stage 1 — Sprint A.1.2 (`mojeek`)
-> _Updated 2026-07-07: A.1.1 (brave) complete._
-
----
-
-## Tier A — reliable general web (spec §5) ▶ current
-
-> Stage 0 (core foundation) is **complete** — dispatch/rank/format/errors land
-> real engine results correctly (112 tests green, -race). Next: Stage 1 engines
-> (`brave`, `mojeek`), starting with Sprint A.1.1.
+> ### ▶ Now working on: Tier B, Stage 1 — Sprint B.1.6 (`table` format + E2E)
+> _Updated 2026-07-09: Tier A complete; all Tier B knowledge engines (arxiv,
+> pubmed, stackexchange, hackernews, grokipedia) done._
 
 ### Stage 0 — Core foundation (prerequisite for every engine)  [→ v0.1]
 #### Sprint A.0.1 — Scaffold + config + engine registry
 - [x] `go.mod` + module; `cmd/mst/main.go`; `internal/` layout (§15)
 - [x] config discovery + load + precedence merge; enforced `version` (§6)
 - [x] `Engine` interface + `Descriptor()`/`EngineInfo` + registry (§8)
-- **DoD:** `go build ./...` succeeds; a unit test loads a sample config and rejects an unknown `version`; the registry enumerates engines via `Descriptor()`.
 #### Sprint A.0.2 — Dispatch + ranking + output + errors
 - [x] dispatcher: fan-out, `EngineRun`, concurrency cap (§7)
 - [x] RRF scoring + dedup + deterministic sort (§9)
 - [x] formatters: json / jsonl / text (§10)
 - [x] structured stderr errors + exit codes (§4, §11)
-- **DoD:** golden-table tests for RRF/dedup pass; a fake-engine end-to-end test returns correctly ranked JSON; exit codes 0/1/2/3 behave per §4; `go test ./...` green.
-  - ✅ Done (2026-07-07): 112 tests green (-race). Deferred to A.2.x with
-    clear exit-2 guards: `--no-merge`, `--raw` (see DECISIONS c/e); `--format
-    table` → v0.2; rich `-v` logging; full `--list-engines` output.
 
-### Stage 1 — Tier A engines  [→ v0.1]   ▶ next (Stage 0 foundation complete)
-#### Sprint A.1.1 — `brave` (keyed; auto-skip without `BRAVE_API_KEY`)
-- [x] `internal/engine/brave/brave.go` — Brave Search API client: HTTP GET to
-  `api.search.brave.com`, parses JSON response into `[]engine.Result`
-- [x] `internal/engine/brave/brave_test.go` — 10 tests: golden-table parse,
-  httptest round-trip, no-key error, context cancellation, HTTP error,
-  malformed response, descriptor, buildRequestURL
-- [x] E2E test in `cmd/mst/main_test.go` — real brave engine through full
-  pipeline with httptest server
-- [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
-- **DoD:** ✅ Done (2026-07-07): 123 tests green (-race). httptest fixture parses
-  brave payload → `[]Result`; auto-skip without key (exit 1); E2E pipeline test
-  with real engine through full dispatch→rank→format path.
-#### Sprint A.1.2 — `mojeek` (keyless HTML scrape)   ▶ complete
-- [x] `internal/engine/mojeek/mojeek.go` — Mojeek scrape engine: HTTP GET to
-  `www.mojeek.com/search`, goquery HTML parsing, pagination (up to 10 pages),
-  retry logic (§11)
-- [x] `internal/engine/mojeek/mojeek_test.go` — 15 tests: golden-table parse,
-  httptest round-trip, descriptor, buildRequestURL, pagination, retry (429/5xx
-  succeed on retry, exhausted, context cancelled during backoff, non-retryable,
-  Retry-After honored)
-- [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
-- **DoD:** ✅ Done: goquery fixture test parses mojeek HTML; keyless —
-  `--list-engines` shows `mojeek`; 147 tests green (-race).
+---
 
-### Stage 2 — v0.1 completion + hardening  [→ v0.1]
-#### Sprint A.2.1 — finish v0.1 engine set: `wikipedia` (Tier B) + `ddg` (Tier C, off by default)   ▶ complete
-- [x] `internal/engine/wikipedia/wikipedia.go` — Wikipedia OpenSearch API client: HTTP GET to
-  `en.wikipedia.org/w/api.php`, parses JSON response `[query, [titles], [descriptions], [urls]]`
-  into `[]engine.Result`
-- [x] `internal/engine/wikipedia/wikipedia_test.go` — 16 tests: descriptor, golden-table parse (5),
+## ✅ Tier A — reliable general web — done (v0.1, 2026-07-08)
+Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
+`ddg` (Tier C, off by default). Full hardening: fuzz/property tests, `--list-engines`,
+`--no-merge`, `--raw`, `--help` tier grouping. 262 tests green (-race).
+
+---
+
+## Tier B — knowledge & reference (spec §5) ▶ next
+### Stage 1 — Knowledge engines  [→ v0.2]
+#### Sprint B.1.1 — `arxiv` (keyless Atom XML API)   ▶ complete
+- [x] `internal/engine/arxiv/arxiv.go` — arXiv API client: HTTP GET to
+  `export.arxiv.org/api/query`, parses Atom XML into `[]engine.Result`
+- [x] `internal/engine/arxiv/arxiv_test.go` — 14 tests: descriptor, golden-table
+  parse (3), httptest round-trip, buildRequestURL (3 cases), context cancellation,
+  HTTP error, malformed response, retry (429 succeeds on retry, exhausted)
+- [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **DoD:** ✅ Done: goquery fixture test parses arXiv Atom XML; keyless —
+  `--list-engines` shows `arxiv`; 13 packages green (-race), +14 new tests.
+
+#### Sprint B.1.2 — `pubmed` (keyless E-utilities API)   ▶ complete
+- [x] `internal/engine/pubmed/pubmed.go` — PubMed E-utilities API client: HTTP GET to
+  `eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi` + `esummary.fcgi`,
+  parses XML into `[]engine.Result`
+- [x] `internal/engine/pubmed/pubmed_test.go` — descriptor, golden-table parse (5),
   httptest round-trip, buildRequestURL (3 cases), context cancellation, HTTP error,
-  malformed response, retry (429 succeeds, exhausted, 5xx succeeds, context cancelled during backoff,
-  non-retryable status)
-- [x] `internal/engine/ddg/ddg.go` — DuckDuckGo HTML scrape engine: HTTP GET to
-  `html.duckduckgo.com/html/?q=<q>`, goquery HTML parsing, selectors per DDG lite template:
-  container `div.result`, url `a.result__a/@href`, title `h2.result__title`, snippet `.result__snippet`
-- [x] `internal/engine/ddg/ddg_test.go` — 13 tests: descriptor (enabled=false), golden-table parse (3),
-  httptest round-trip, buildRequestURL (2 cases), context cancellation, HTTP error,
-  retry (429/5xx succeed on retry, exhausted, context cancelled during backoff, non-retryable)
+  malformed response, esearch-empty, retry (429 succeeds, exhausted)
 - [x] Wire into `defaultRegistry()` in `cmd/mst/main.go`
-- [x] E2E tests: `TestRun_Wikipedia_E2E`, `TestRun_DDG_E2E`, `TestRun_DDG_OffByDefault` in `cmd/mst/main_test.go`
-- **DoD:** ✅ Done: 217 tests green (-race). Wikipedia parses JSON OpenSearch API; ddg off by default
-  (explicit `--engine ddg` required); E2E pipeline tests for both engines.
-#### Sprint A.2.2 — hardening: tests (§14), `--list-engines`, exit/format polish   ▶ complete
-- [x] Fuzz/property tests for canonicalization + RRF (§14): `FuzzCanonicalize`
-  (idempotency/fragment-free/no-panic; 60s/4.4M-exec run clean) + property tests
-  (run-reordering determinism, single-engine score monotonicity, dedup-sums,
-  all-scores-positive) in `internal/rank/`
-- [x] `--list-engines` full §4 output — `name`/`enabled`/`keyed`/`key_present`
-  (bool or `null`)/`weight`/`status`, respecting `--format` (json/jsonl/text;
-  table → exit 2). Replaces the A.0.2 placeholder. State resolution shared with
-  `resolvePlan` via new `computeStates`.
-- [x] `--no-merge` (§10) — per-engine native-order groups, `engine` field, no
-  score/rank; json/jsonl/text; `--offset` is a no-op with a -v notice.
-- [x] `--raw` (§10) — per-engine parsed native payload keyed by engine name
-  (JSON-only); new `engine.RawEngine` interface + `EngineRun.Raw` + `DispatchRaw`;
-  all 4 engines implement it (JSON engines → decoded JSON; scrape engines →
-  response body).
-- [x] `--help` groups flags by §4 skill tier (Tier 1/2/3, spec order).
-- [x] `--format text` (results) verified; `--format table` → exit 2 (v0.2);
-  exit codes 0/1/2/3 verified.
-- **DoD:** ✅ Done (2026-07-08): 262 tests green (-race). §14 fuzz/property;
-  `--list-engines`; `--no-merge`; `--raw`; `--help` tier grouping; text/table/
-  exit codes verified. **v0.1 is feature-complete per §16 and taggable**
-  (version const is still `dev`; a v0.1 tag/release is the explicit next step).
+- **DoD:** ✅ Done: pubmed engine implements the NCBI E-utilities esearch+esummary
+  XML API; 17 tests green (-race); full suite 303 tests green (-race);
+  `--list-engines` shows `pubmed` with status `ready`.
+
+#### Sprint B.1.3 — `stackexchange` (keyless API)   ▶ complete
+- [x] `internal/engine/stackexchange/stackexchange.go` — Stack Exchange Search API
+  client: HTTP GET to `api.stackexchange.com/2/search/advanced`, parses JSON into
+  `[]engine.Result`
+- [x] `internal/engine/stackexchange/stackexchange_test.go` — descriptor, golden-table
+  parse (5), httptest round-trip, buildRequestURL (3 cases + path check),
+  context cancellation, HTTP error, malformed response, API error, retry (429
+  succeeds, exhausted)
+- [x] Wire into `defaultRegistry()`
+- **DoD:** ✅ Done: stackexchange engine implements the Stack Exchange Search JSON
+  API; strips HTML tags from body content; 16 tests green (-race); full suite
+  320 tests green (-race); `--list-engines` shows `stackexchange` with status
+  `ready`. Weight 1.0 (Tier B knowledge, lower than arxiv/pubmed for structured
+  reference).
+
+#### Sprint B.1.4 — `hackernews` (keyless Algolia API)   ▶ complete
+- [x] `internal/engine/hackernews/hackernews.go` — Hacker News Algolia Search API
+  client: HTTP GET to `hn.algolia.com/api/v1/search`, parses JSON into
+  `[]engine.Result`
+- [x] `internal/engine/hackernews/hackernews_test.go` — descriptor, golden-table
+  parse (6), httptest round-trip, buildRequestURL (3 cases), context cancellation,
+  HTTP error, malformed response, retry (429 succeeds, exhausted)
+- [x] Wire into `defaultRegistry()`
+- **DoD:** ✅ Done: hackernews engine implements the HN Algolia Search JSON API;
+  constructs HN URLs from objectID when direct URL missing; includes date/points
+  in snippet; 17 tests green (-race); full suite 337 tests green (-race);
+  `--list-engines` shows `hackernews` with status `ready`. Weight 0.8 (Tier B
+  knowledge, community/discussion source).
+- **Note:** Uses `hn.algolia.com/api/v1/search` with `tags=story` filter for
+  HN story search (not comments or jobs).
+
+#### ✅ Sprint B.1.5 — `grokipedia` (keyless JSON API)   ▶ complete
+- [x] `internal/engine/grokipedia/grokipedia.go` — Grokipedia full-text search
+  API client: GET `grokipedia.com/api/full-text-search?query=&limit=`, parses
+  JSON `{results:[{slug,title,snippet}]}` into `[]engine.Result`; URL =
+  `grokipedia.com/page/<slug>`; HTML stripped from snippet (§5).
+- [x] `internal/engine/grokipedia/grokipedia_test.go` — descriptor, golden-table
+  parse (6: normal/empty/missing-slug/missing-title/html-snippet/malformed),
+  httptest round-trip, buildRequestURL (3 cases), context cancellation, HTTP
+  error, malformed response, SearchWithRaw, retry (429 succeeds, exhausted),
+  + gated `TestSearch_Live` (MST_ITEST=1).
+- [x] Wire into `defaultRegistry()`.
+- **DoD:** ✅ Done (after 2026-07-09 review fixes): correct `/api/full-text-search`
+  path, html→text snippet stripping (§5), live test **green** (10 real results).
+  Ships `enabled: false` (SearXNG marks experimental/inactive); full suite **360
+  tests green** (-race) + 2 live-test skips; `--list-engines` shows `grokipedia`
+  with status `disabled`, weight 1.0.
+- **Note:** upstream SearXNG marks grokipedia `inactive` (experimental); ship
+  with `enabled: false` until stability confirmed. Review found & fixed a path
+  bug (dropped `/api` segment, masked by its own tests) + missing html→text —
+  see DECISIONS 2026-07-09.
+
+#### Sprint B.1.6 — `table` format (§10) + E2E integration tests
+- [ ] `internal/format/table.go` — fixed-width column rendering for terminal use
+- [ ] `internal/format/format_test.go` — table rendering tests (wide/narrow titles,
+  truncated URLs, snippet wrapping)
+- [ ] `MST_ITEST=1` live integration test gate (§14) for keyless engines
+- [ ] Wire `table` into `validateFormat` (remove exit-2 guard)
+- **DoD:** `go test -race ./...` green; `--format table` renders results in a
+  terminal-friendly table.
+
+### Stage 2 — Tier B hardening  [→ v0.2]
+#### Sprint B.2.1 — `table` format polish + `MST_ITEST=1` live tests for all Tier B engines
+- [ ] Live integration tests: arxiv, pubmed, stackexchange, hackernews, grokipedia
+- [ ] `table` format: column width adjustment, truncation, alignment
+- [ ] Update DECISIONS with grokipedia stability assessment
+
+### Stage 3 — Engine categories & group aliases  [→ v0.3]
+#### Sprint B.3.1 — Engine categories & group aliases
+- [ ] Add `Category` field to `EngineInfo` in `internal/engine/engine.go`
+- [ ] Assign categories to every engine in `defaultRegistry()`:
+      `general` → `mojeek`, `ddg`, `brave`;
+      `reference` → `wikipedia`, `grokipedia`;
+      `academic` → `arxiv`, `pubmed`;
+      `news` → `hackernews`;
+      `q&a` → `stackexchange`
+- [ ] Support `--engine <category>` — selects all engines in that category
+- [ ] Support built-in property aliases: `--engine free` (keyless),
+      `--engine keyed` (needs a key), `--engine all`
+- [ ] Update `--list-engines` to show each engine's category
+- [ ] Mixing aliases with engine names in `--engine`: keep strict-whitelist
+      semantics (resolved set = union of all names across aliases)
+- [ ] Update spec §4 (`--engine` alias docs), §8 (`EngineInfo.Category`),
+      §5 (engine tables add a `Category` column), §16 (roadmap → v0.3)
+- [ ] Revisit arxiv AND fix: keep as query-quality improvement for academic
+      queries; categories make OR-flooding unreachable for default (general)
+      queries since arxiv won't run under `general` category
+- **DoD:** `go test -race ./...` green; `--engine academic "transformer"` runs
+  only academic engines; `--engine free "query"` selects all keyless engines;
+  `--list-engines` shows categories; category flag without a matching engine
+  exits 2 (like unknown engine names today).
 
 ---
 
-## ✅ Tier A — reliable general web — done (v0.1-ready, 2026-07-08)
-Foundation (dispatch/rank/config/CLI/format/errors) + engines `brave`, `mojeek`,
-plus `wikipedia` (Tier B) and `ddg` (Tier C, off by default), and full v0.1
-hardening (§14 fuzz/property tests, `--list-engines`, `--no-merge`, `--raw`,
-`--help` tier grouping). 262 tests green (-race). Ready to tag v0.1.
+## Tier C — scraped general web (spec §5)
+### Stage 1 — Scraped engines  [→ v0.3]
+
+#### ✅ `ddg` redesign — SearXNG mechanism (2026-07-09, interlude)
+`ddg` was first shipped in A.2.1 with guessed selectors and an unlogged §12
+violation (spoofed browser UA). Redesigned to actually work by following
+SearXNG (`docs/DDG-research.md`): form **POST** to `html.duckduckgo.com/html/`,
+static browser UA + `Sec-Fetch-*`/`Referer` headers, confirmed selectors
+(`#links > div[class*=web-result]`, `h2 a`, `a.result__snippet`), CAPTCHA
+detection (`ErrCaptcha`), ≥500-char query guard, `uddg=` unwrap. §12 scrape-UA
+carve-out folded into spec. **`MST_ITEST=1` live test green** (10 real
+results); full suite 341 tests green (-race). Single page only — see follow-up.
+
+#### Sprint C.1.0 — `ddg` `vqd` multi-page (follow-up)
+- [ ] Extract `vqd` from page-1 response (`<input name="vqd">`), cache per
+      `(query, UA)`; request page 2+ with `s`/`dc`/`vqd`/`api=d.js`/`o=json`/
+      `v=l` to satisfy the ranker's `FetchLimit` (~30)
+- [ ] Paginating-engine partial-results contract (§7); tests
+- **DoD:** `MST_ITEST=1` live test returns ≥`min(--limit*3,20)` results when DDG
+  has them; `go test -race ./...` green.
+
+#### Sprint C.1.1 — `google` (keyed API)
+- [ ] `internal/engine/google/google.go` — Google Programmable Search Engine API
+- [ ] Wire into `defaultRegistry()`
+- **DoD:** `go test -race ./...` green.
+
+#### Sprint C.1.2 — `bing` (keyed API)
+- [ ] `internal/engine/bing/bing.go` — Bing Web Search v7 API
+- [ ] Wire into `defaultRegistry()`
+- **DoD:** `go test -race ./...` green.
 
 ---
 
-## Future tiers (sketch — plan in detail when reached)
-- **Tier B** Stage 1 — `arxiv`, `pubmed`, `stackexchange`, `hackernews`,
-  `grokipedia`; `table` format → v0.2
-- **Tier C** Stage 1 — `google`, `bing` → v0.3
-- **Tier D** — `tavily`; skill affordances (`--help-json`, `--fields`,
-  `--dry-run`, engine aliases) → v0.3
+## Tier D — AI-oriented (spec §5)
+### Stage 1 — AI answer engines  [→ v0.3]
+#### Sprint D.1.1 — `tavily` (keyed API)
+- [ ] `internal/engine/tavily/tavily.go` — Tavily Search API
+- [ ] Wire into `defaultRegistry()`
+- **DoD:** `go test -race ./...` green.
 
 ---
 

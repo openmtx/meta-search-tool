@@ -122,6 +122,14 @@ func (a *arxiv) fetch(ctx context.Context, q string, opts engine.Options) ([]eng
 
 // buildRequestURL constructs the arXiv API query URL with parameters.
 // Limit is capped at 3000 (arXiv's hard limit) and floored at 1.
+//
+// Query construction: arXiv's search syntax OR's adjacent fielded terms
+// (all:a all:b is read as all:a OR all:b), which floods irrelevant matches for
+// multi-word queries (e.g. "Erling Haaland diet" returned a flood of "ERL"
+// physics papers matching the single term "Erling"). We therefore explicitly
+// AND each term (all:t1 AND all:t2 AND ...) so a paper must contain every query
+// term — an out-of-domain query honestly yields ~0 hits instead of a noise
+// flood. Single-term queries are unaffected.
 func buildRequestURL(q string, limit int) (string, error) {
 	if limit < 1 {
 		limit = 1
@@ -129,12 +137,18 @@ func buildRequestURL(q string, limit int) (string, error) {
 	if limit > 3000 {
 		limit = 3000
 	}
+	terms := strings.Fields(q)
+	parts := make([]string, len(terms))
+	for i, t := range terms {
+		parts[i] = "all:" + t
+	}
+	searchQuery := strings.Join(parts, " AND ")
 	base, err := url.Parse(apiBase)
 	if err != nil {
 		return "", err
 	}
 	params := base.Query()
-	params.Set("search_query", "all:"+q)
+	params.Set("search_query", searchQuery)
 	params.Set("start", "0")
 	params.Set("max_results", fmt.Sprintf("%d", limit))
 	base.RawQuery = params.Encode()
