@@ -44,6 +44,46 @@ Example output:
 }
 ```
 
+## Installation
+
+`mst` is a single static binary with no runtime dependencies. Pick either path.
+
+### Prebuilt binary (recommended — no Go needed)
+
+1. Download the archive for your platform from
+   [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases).
+   Archives are named `mst-<tag>-<os>-<arch>.tar.gz` (Linux/macOS) or `.zip`
+   (Windows), where `os` is `linux`, `darwin`, or `windows` and `arch` is
+   `amd64` or `arm64` — e.g. `mst-v0.3.0-linux-amd64.tar.gz`.
+2. Extract and put `mst` on your PATH:
+
+   ```bash
+   tar xzf mst-v0.3.0-linux-amd64.tar.gz
+   mkdir -p ~/.local/bin
+   install -m 0755 mst-v0.3.0-linux-amd64/mst ~/.local/bin/mst   # any dir on $PATH
+   ```
+
+   On Windows, unzip the archive and move `mst.exe` to a directory on `%PATH%`.
+
+3. *(Optional)* Verify against the `SHA256SUMS.txt` shipped with the release:
+
+   ```bash
+   sha256sum -c --ignore-missing SHA256SUMS.txt   # macOS: shasum -a 256 -c
+   ```
+
+### From source (needs Go 1.26+)
+
+```bash
+go install github.com/openmtx/meta-search-tool/cmd/mst@latest
+```
+
+### Verify
+
+```bash
+mst --version        # e.g. mst v0.3.0
+mst --list-engines   # engines, status, effective weights
+```
+
 ## What `mst` gives you
 
 - **Concurrent fan-out** to all enabled engines with per-engine timeouts; a

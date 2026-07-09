@@ -224,15 +224,25 @@ func computeStates(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) [
 	whitelist := setOf(flags.Engines)
 	excludeSet := setOf(flags.Exclude)
 
+	// When no --engine whitelist is specified, default to "general" category
+	// only (§4: --engine defaults to *all enabled*; v1.0 scope is general web
+	// search, so the default selects only General-category engines). An explicit
+	// --engine (e.g. --engine academic, --engine all) expands to the requested
+	// set, overriding this default.
+	useGeneralOnly := len(whitelist) == 0
+
 	states := make([]engineState, 0, len(names))
 	for i, n := range names {
 		info := reg.Get(n).Descriptor()
 		ec := cfg.Engines[n]
 
-		// enabled: default → config → --engine whitelist → --exclude.
+		// enabled: default → config → --engine whitelist → category default → --exclude.
 		enabled := info.Enabled
 		if ec != nil && ec.Enabled != nil {
 			enabled = *ec.Enabled
+		}
+		if useGeneralOnly {
+			enabled = enabled && info.Category == "general"
 		}
 		if len(whitelist) > 0 {
 			enabled = whitelist[n]

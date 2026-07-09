@@ -95,15 +95,15 @@ func (*google) Name() string { return "google" }
 // Descriptor implements engine.Engine. The engine is effectively keyless — if
 // GOOGLE_API_KEY + GOOGLE_CX are set, it uses the official JSON API; if only
 // a CX is available (env var or built-in default), it uses the public CSE token
-// approach (SearXNG-style); otherwise it falls back to HTML scrape. Disabled
-// by default.
+// approach (SearXNG-style); otherwise it falls back to HTML scrape.
+// Enabled by default in the general category (after ddg in registration order).
 func (*google) Descriptor() engine.EngineInfo {
 	return engine.EngineInfo{
 		Name:          "google",
 		Keyed:         false, // works without keys (public CSE or scrape)
 		KeyEnv:        "",
 		DefaultWeight: 1.0,
-		Enabled:       false, // opt-in
+		Enabled:       true,
 		Category:      "general",
 	}
 }
