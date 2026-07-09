@@ -47,11 +47,13 @@ cached binary; re-run the script to update.
 > the core value of `mst` — concurrent multi-engine search with RRF fusion, dedup,
 > and transparent scoring. A degraded single-engine fallback would silently
 > produce worse results without the caller knowing. Clear failure is better:
-> the skill reports the error and tells the caller to install `mst` manually:
+> the skill reports the error and tells the caller how to install `mst`:
 >
-> ```bash
-> go install github.com/openmtx/meta-search-tool/cmd/mst@latest
-> ```
+> - **From a release binary (no toolchain needed):** download the archive for
+>   your platform from
+>   [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases),
+>   extract, and place the `mst` binary somewhere on `PATH`.
+> - **From source (needs Go):** `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`
 
 ## Search
 
