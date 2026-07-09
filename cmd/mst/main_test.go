@@ -612,12 +612,12 @@ func TestRun_NoMerge_PartialResultsOnFailure(t *testing.T) {
 // === --list-engines (§4) ====================================================
 
 // listReg builds a registry that exercises every status: brave (keyed, no key →
-// missing-key), mojeek (keyless → ready), ddg (disabled by default).
+// missing-key), mojeek (keyless → ready), grokipedia (disabled by default).
 func listReg() *engine.Registry {
 	return newReg(
 		&fakeEngine{name: "brave", weight: 2.0, enabled: true, keyed: true, keyEnv: "BRAVE_API_KEY"},
 		&fakeEngine{name: "mojeek", weight: 1.3, enabled: true},
-		&fakeEngine{name: "ddg", weight: 0.5, enabled: false},
+		&fakeEngine{name: "grokipedia", weight: 1.0, enabled: false},
 	)
 }
 
@@ -658,9 +658,9 @@ func TestRun_ListEngines_JSON(t *testing.T) {
 	if mojeek.Status != "ready" || mojeek.Weight != 1.3 {
 		t.Errorf("mojeek = %+v, want ready/weight=1.3", mojeek)
 	}
-	ddg := findEntry(t, entries, "ddg")
-	if ddg.Status != "disabled" || ddg.Enabled {
-		t.Errorf("ddg = %+v, want disabled", ddg)
+	grok := findEntry(t, entries, "grokipedia")
+	if grok.Status != "disabled" || grok.Enabled {
+		t.Errorf("grokipedia = %+v, want disabled", grok)
 	}
 	// keyless key_present serializes as JSON null.
 	if !strings.Contains(out, `"key_present":null`) {
@@ -706,7 +706,7 @@ func TestRun_ListEngines_Text(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	for _, want := range []string{"NAME", "brave", "missing-key", "mojeek", "ready", "ddg", "disabled", "keyless"} {
+	for _, want := range []string{"NAME", "brave", "missing-key", "mojeek", "ready", "grokipedia", "disabled", "keyless"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text list missing %q in:\n%s", want, out)
 		}
@@ -886,7 +886,7 @@ func TestRun_DDG_E2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ddg is off by default — must explicitly enable via --engine.
+	// ddg is on by default; -e ddg is redundant but harmless.
 	code, out, errs := runWith(t, []string{"-e", "ddg", "-n", "5", "test query"}, reg, "")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
@@ -907,31 +907,41 @@ func TestRun_DDG_E2E(t *testing.T) {
 	}
 }
 
-// TestRun_DDG_OffByDefault verifies ddg is disabled by default.
-func TestRun_DDG_OffByDefault(t *testing.T) {
-	// Use a fake engine that reports enabled=false (mimicking ddg's descriptor).
-	ddgFake := &fakeEngine{
-		name:    "ddg",
-		weight:  0.5,
-		enabled: false, // off by default
-		results: []engine.Result{r("D", "https://x/ddg")},
+// TestRun_DDG_OnByDefault verifies ddg now runs without --engine ddg, since its
+// descriptor Enabled is true (keyless general-web, on by default).
+func TestRun_DDG_OnByDefault(t *testing.T) {
+	fixture := `<html><body><div id="links">` +
+		`<div class="web-result"><h2><a class="result__a" href="https://example.com/ddg-bydefault">DDG Default</a></h2>` +
+		`<a class="result__snippet">ran without --engine</a></div>` +
+		`</div></body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(fixture))
+	}))
+	defer ts.Close()
+
+	origBase := ddg.ScrapeBase()
+	ddg.SetScrapeBase(ts.URL)
+	defer ddg.SetScrapeBase(origBase)
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(ddg.New()); err != nil {
+		t.Fatal(err)
 	}
-	reg := newReg(ddgFake)
-	// Without --engine ddg, ddg should be auto-skipped (enabled=false).
-	code, out, _ := runWith(t, []string{"q"}, reg, "")
-	if code != 1 {
-		t.Fatalf("exit = %d, want 1 (ddg off by default, no results)", code)
+
+	// No --engine flag: ddg runs because its descriptor Enabled is true.
+	code, out, errs := runWith(t, []string{"q"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (ddg on by default); stderr=%s", code, errs)
 	}
-	if strings.Contains(out, "ddg") {
-		t.Errorf("ddg should not appear in output when off by default: %s", out)
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\n%s", err, out)
 	}
-	// With --engine ddg, it should run.
-	code2, out2, _ := runWith(t, []string{"-e", "ddg", "q"}, reg, "")
-	if code2 != 0 {
-		t.Fatalf("exit = %d, want 0 (--engine ddg enables it)", code2)
+	if bs, ok := env.Engines["ddg"]; !ok || !bs.OK {
+		t.Errorf("engines block: ddg = %+v, want ok=true (ran by default)", env.Engines["ddg"])
 	}
-	if !strings.Contains(out2, "https://x/ddg") {
-		t.Errorf("ddg result should appear with --engine: %s", out2)
+	if len(env.Results) != 1 || env.Results[0].Title != "DDG Default" {
+		t.Errorf("results = %+v, want 1 result from ddg by default", env.Results)
 	}
 }
 

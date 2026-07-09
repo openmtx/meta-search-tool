@@ -3,8 +3,10 @@
 // DuckDuckGo is a keyless HTML scrape engine. It submits a no-JS form POST to
 // html.duckduckgo.com/html/ — the same mechanism SearXNG uses (see
 // docs/DDG-research.md) — and parses the returned HTML. It requires no API key.
-// DDG is **off by default** (§17.3) because datacenter IPs get heavily
-// anti-scraped; opt in with `--engine ddg` or `ddg.enabled: true`.
+// DDG is **on by default** (a keyless general-web engine alongside mojeek).
+// It was off by default in early v0.1 as "fragile", but the SearXNG-mechanism
+// redesign + UA rotation (docs/DDG-research.md) made it reliable in practice;
+// disable with `--exclude ddg` or `ddg.enabled: false`.
 //
 // # Bot detection
 //
@@ -124,7 +126,7 @@ func (*ddg) Descriptor() engine.EngineInfo {
 		Keyed:         false,
 		KeyEnv:        "",
 		DefaultWeight: 1.0,
-		Enabled:       false, // off by default (§17.3)
+		Enabled:       true, // on by default (keyless general-web)
 	}
 }
 

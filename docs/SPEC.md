@@ -232,10 +232,9 @@ credentials; skipped silently if absent unless `--require`).
 | `mojeek` | ✅† | none (scrape) | Independent index, scrape-tolerant; paid/beta API exists. Reliable keyless general web. |
 
 > ⚠️ **Mojeek is HTML-scraped** — more scrape-tolerant than the Tier-C
-> engines, but inherently less reliable than an API. It is the *only* keyless
-> general-web engine in v1, so a keyless install has no structured-API
-> general-web fallback; if its scrape breaks, the remaining keyless fallback is
-> the off-by-default `ddg` (Tier C, more fragile). Monitor scrape viability (§18).
+> engines, but inherently less reliable than an API. It is one of *two* keyless
+> general-web engines on by default (with `ddg`), so a keyless install has a
+> general-web fallback if either scrape breaks. Monitor scrape viability (§18).
 
 ### Tier B — knowledge & reference (free APIs; keyless; high grounding value)
 
@@ -264,7 +263,7 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
 
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
-| `ddg` (DuckDuckGo) | ✅ | none | HTML scrape; **best-effort, fragile** (see note). Off by default. |
+| `ddg` (DuckDuckGo) | ✅ | none | HTML scrape; **best-effort** (see note). On by default. |
 | `google` | ❌ | `GOOGLE_API_KEY` + `GOOGLE_CX` | Programmable Search Engine (keyed API is fine; *scraping* Google is what gets blocked). |
 | `bing` | ❌ | `BING_API_KEY` | Bing Web Search v7 (keyed API). |
 
@@ -286,9 +285,11 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
 > challenge (`<form id="challenge-form">`) as an engine error rather than
 > silently returning zero results. Real-world metasearch deployments pin DDG at
 > the *lowest* weight with an aggressive timeout — datacenter requests get
-> heavily anti-scraped. Accordingly `ddg` is **off by default** (§17.3): opt in
-> with `--engine ddg` or `ddg.enabled: true`. It remains a keyless fallback when
-> no keyed engine is configured. HTML scraping carries ToS/legal considerations
+> heavily anti-scraped. DDG was off by default in early v0.1 as "fragile", but
+> the SearXNG-mechanism implementation + UA rotation proved reliable in live
+> testing, so `ddg` is **on by default** as a keyless general-web engine
+> (alongside `mojeek`); disable with `--exclude ddg` or `ddg.enabled: false`.
+> HTML scraping carries ToS/legal considerations
 > — users are responsible for compliance in their jurisdiction; `mst` bounds
 > load via the retry policy (§11). Only page 1 is fetched (the `vqd` token
 > required for page 2+ is a documented follow-up), yielding ~10–15 results.
@@ -379,7 +380,7 @@ engines:
   brave:        { weight: 2.0, enabled: true,  api_key_env: BRAVE_API_KEY, timeout: 4s }
   wikipedia:    { weight: 1.5, enabled: true,  timeout: 3s }
   mojeek:       { weight: 1.3, enabled: true,  timeout: 4s }
-  ddg:          { weight: 1.0, enabled: false, timeout: 3s }   # scrape (SearXNG mechanism); off by default
+  ddg:          { weight: 1.0, enabled: true,  timeout: 3s }   # scrape (SearXNG mechanism); on by default
   google:       { weight: 1.0, enabled: false, api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }
   bing:         { weight: 1.0, enabled: false, api_key_env: BING_API_KEY }
   tavily:       { weight: 1.2, enabled: false, api_key_env: TAVILY_API_KEY }
@@ -709,7 +710,7 @@ meta-search-tool/
 ## 16. Roadmap
 
 - **v0.1:** `wikipedia` + `mojeek` + `brave` (auto-skips without a key);
-  `ddg` implemented but **off by default**;
+  `ddg` implemented and **on by default**;
   JSON/JSONL/text output; config + flags; **`--rrf-k`**, `--require`, `--strict`,
   `--raw`, `--no-merge`, **`--offset`**; skill-tier flag classification (§4);
   structured stderr errors (§11); **opinionated default weights by reliability
@@ -738,9 +739,10 @@ meta-search-tool/
 2. **Config format:** YAML (`gopkg.in/yaml.v3`).
 3. **Default enabled engines (reliability-tiered):** the default-on set is the
    *reliable* engines — `wikipedia` and `mojeek`, plus `brave` (auto-skips if
-   no key). `ddg` is **implemented
-   but off by default** (fragile scrape; opt in with `--engine ddg`). All keyed
-   engines (`google`, `bing`, `tavily`, …) are opt-in until enabled with keys.
+   no key). `ddg` is **implemented and on by default** (keyless general-web,
+   alongside mojeek; SearXNG-mechanism scrape — disable with `--exclude ddg`).
+   All keyed engines (`google`, `bing`, `tavily`, …) are opt-in until enabled
+   with keys.
    Default *weights* follow the §5 tiers (high for reliable/structured, low for
    scraped general), so a fresh install is useful for LLM grounding without
    per-call tuning.

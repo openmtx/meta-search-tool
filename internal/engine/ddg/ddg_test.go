@@ -57,8 +57,8 @@ func TestDescriptor(t *testing.T) {
 	if info.DefaultWeight != 1.0 {
 		t.Errorf("DefaultWeight = %v, want 1.0", info.DefaultWeight)
 	}
-	if info.Enabled {
-		t.Error("Enabled should be false (off by default)")
+	if !info.Enabled {
+		t.Error("Enabled should be true (on by default)")
 	}
 }
 
