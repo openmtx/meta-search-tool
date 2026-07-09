@@ -158,6 +158,50 @@ and only shows up in the `engines` block — it does not stop the run. Use
 - Need more results? → `--offset` to page, or raise `--limit`.
 - An engine keeps failing? → `--exclude` it.
 
+## Profiles — pick the right engines for the query
+
+Not every query benefits from all 12 engines. `mst` groups engines by
+category so you can match the engine set to the task:
+
+| Category | `--engine` | Engines | Best for |
+|----------|------------|---------|----------|
+| General web | *(default)* | `brave`, `bing`, `google`, `ddg`, `mojeek`, `tavily` | Broad web search, news, products, everyday queries |
+| Reference | `reference` | `wikipedia`, `grokipedia` | Encyclopedic facts, definitions, overviews |
+| Academic | `academic` | `arxiv`, `pubmed` | Research papers, CS, physics, medicine, biomed |
+| News | `news` | `hackernews` | Tech news, discussion, trending stories |
+| Q&A | `q\&a` or `"q&a"` | `stackexchange` | Programming Q&A, technical how-to, expert answers |
+| Keyless only | `free` | All engines that need no API key | Zero-setup search, no env vars required |
+| All engines | `all` | Everything registered | Maximum coverage, slower |
+
+Examples:
+
+```bash
+# Research paper on transformers
+mst --engine academic "vision transformer 2025"
+
+# Tech news
+mst --engine news "rust async runtime"
+
+# Quick fact check from Wikipedia
+mst --engine reference "Reciprocal Rank Fusion"
+
+# Programming question
+mst --engine 'q&a' "goroutine leak detection"
+
+# General search with zero setup (keyless only)
+mst --engine free "best espresso grinder"
+```
+
+Categories compose with individual engines. This uses the academic engines
+plus a general-web engine for context:
+
+```bash
+mst --engine academic,brave "transformer attention mechanisms"
+```
+
+For the best results on a broad query, use the default (all enabled engines)
+or narrow to the category that matches the domain.
+
 ## Flags this skill uses (tier-1 only)
 
 `<query>` (positional), `--stdin`, `-e/--engine`, `--exclude`, `-n/--limit`,
