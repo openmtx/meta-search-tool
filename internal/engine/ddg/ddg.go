@@ -20,16 +20,16 @@
 // embedded CAPTCHA challenge (`<form id="challenge-form">`) — surfacing it as
 // ErrCaptcha rather than silently returning zero results. This browser-UA
 // simulation is an explicit carve-out to the honest-UA policy (§12) for scrape
-// engines; structured-API engines keep the identifying `mst/<version>` UA. The
-// UA is picked once per Search call (so a future vqd multi-page sequence would
-// reuse it across that query's pages).
+// engines; structured-API engines keep the identifying `mst/<version>` UA.
 //
-// # Single page
+// # Multi-page (vqd)
 //
-// Only page 1 is fetched. DDG needs a `vqd` token (extracted from the page-1
-// response, cached per query+UA) to request page 2+; multi-page support is a
-// documented follow-up (DECISIONS.md). A single page yields ~10–15 results,
-// which the ranker handles gracefully as a smaller candidate pool.
+// ddg fetches multiple pages up to the FetchLimit (derived from Options.Limit).
+// Page 1 uses the no-JS form POST (`q`, `b`, `kl`). The response contains a
+// vqd token (`<input name="vqd">`) which is extracted and cached for the
+// duration of the Search call. Pages 2+ reuse the same vqd and UA, adding
+// pagination params (`s`, `dc`, `api=d.js`, `o=json`, `v=l`) to the form body.
+// Offset logic follows SearXNG: page N has offset = 10 + (N-2)*15.
 //
 // The HTTP retry/backoff policy (§11) is shared via internal/engine/retry.
 package ddg
@@ -155,68 +155,159 @@ func (d *ddg) SearchWithRaw(ctx context.Context, q string, opts engine.Options) 
 }
 
 // fetch is the shared DuckDuckGo request+parse core for Search and SearchWithRaw.
-func (d *ddg) fetch(ctx context.Context, q string, _ engine.Options) ([]engine.Result, any, error) {
+// It fetches multiple pages (up to opts.Limit) using the vqd token extracted
+// from page 1, following SearXNG's multi-page mechanism.
+func (d *ddg) fetch(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
 	// DDG rejects queries with 499+ characters. Skip rather than send (matches
 	// SearXNG, which sets url=None): no results, no error.
 	if len(q) >= maxQueryLen {
 		return nil, nil, nil
 	}
 
-	formBody := buildRequestBody(q)
-
-	// Pick the browser UA once for this query (forward-compatible with a future
-	// vqd multi-page sequence, which must reuse the same UA across its pages).
+	// Pick the browser UA once for this query — vqd is query+UA-bound.
 	ua := uaSource()
 
-	// newReq builds a fresh POST request per retry attempt. The body is a fresh
-	// strings.Reader each call so it is re-readable across retries. DDG's html
-	// endpoint requires a realistic desktop User-Agent and the Sec-Fetch/Referer
-	// headers a real no-JS browser sends on a form submit — otherwise it returns
-	// an anomaly/CAPTCHA page (docs/DDG-research.md).
-	newReq := func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, scrapeBase, strings.NewReader(formBody))
-		if err != nil {
-			return nil, err
+	var allResults []engine.Result
+	var vqd string
+	var page1Raw any
+	pageno := 1
+
+	for {
+		if err := ctx.Err(); err != nil {
+			if len(allResults) > 0 {
+				return allResults, page1Raw, err
+			}
+			return nil, page1Raw, err
 		}
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		httpReq.Header.Set("User-Agent", ua)
-		httpReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
-		httpReq.Header.Set("Referer", ddgReferer)
-		httpReq.Header.Set("Sec-Fetch-Dest", "document")
-		httpReq.Header.Set("Sec-Fetch-Mode", "navigate")
-		httpReq.Header.Set("Sec-Fetch-Site", "same-origin")
-		httpReq.Header.Set("Sec-Fetch-User", "?1")
-		return httpReq, nil
+		if len(allResults) >= opts.Limit {
+			break
+		}
+
+		// Build form body for the current page.
+		var formBody string
+		if pageno == 1 {
+			formBody = buildRequestBody(q)
+		} else {
+			if vqd == "" {
+				break // no vqd → can't fetch more pages
+			}
+			offset := 10 + (pageno-2)*15
+			formBody = buildNextPageBody(q, vqd, offset)
+		}
+
+		// pageReq builds a POST for this specific page.
+		pageReq := func() (*http.Request, error) {
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, scrapeBase, strings.NewReader(formBody))
+			if err != nil {
+				return nil, err
+			}
+			httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			httpReq.Header.Set("User-Agent", ua)
+			httpReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+			httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
+			httpReq.Header.Set("Referer", ddgReferer)
+			httpReq.Header.Set("Sec-Fetch-Dest", "document")
+			httpReq.Header.Set("Sec-Fetch-Mode", "navigate")
+			httpReq.Header.Set("Sec-Fetch-Site", "same-origin")
+			httpReq.Header.Set("Sec-Fetch-User", "?1")
+			return httpReq, nil
+		}
+
+		resp, err := retry.Do(ctx, "ddg", pageReq)
+		if err != nil {
+			// Hard error (network, exhausted retries): return partial results
+			// per §7 partial-results contract.
+			if len(allResults) > 0 {
+				return allResults, page1Raw, err
+			}
+			return nil, nil, err
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			if len(allResults) > 0 {
+				return allResults, page1Raw, fmt.Errorf("ddg: read body: %w", err)
+			}
+			return nil, nil, fmt.Errorf("ddg: read body: %w", err)
+		}
+
+		bodyStr := string(body)
+		results, perr := parseResults(bodyStr)
+		if perr != nil {
+			// CAPTCHA or parse error: return partial results.
+			if len(allResults) > 0 {
+				return allResults, page1Raw, perr
+			}
+			return nil, bodyStr, perr
+		}
+
+		if pageno == 1 {
+			page1Raw = bodyStr
+			vqd = extractVQDFromHTML(bodyStr)
+		}
+
+		allResults = append(allResults, results...)
+
+		if len(results) == 0 {
+			break // empty page → no more results
+		}
+		pageno++
 	}
 
-	resp, err := retry.Do(ctx, "ddg", newReq)
-	if err != nil {
-		return nil, nil, err
+	if len(allResults) > opts.Limit {
+		allResults = allResults[:opts.Limit]
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("ddg: read body: %w", err)
+	if len(allResults) == 0 {
+		return nil, page1Raw, nil
 	}
-	results, perr := parseResults(string(body))
-	if perr != nil {
-		return nil, nil, perr
-	}
-	return results, string(body), nil
+	return allResults, page1Raw, nil
 }
 
 // buildRequestBody encodes the DDG no-JS search form (page 1): `q=<query>` plus
 // `b=` (empty "beginning" param for first page) and `kl=wt-wt` (all regions).
-// Page 2+ would additionally carry `vqd`, `s`, `dc`, `nextParams`, `api=d.js`,
-// `o=json`, `v=l` — not used in the single-page implementation.
 func buildRequestBody(q string) string {
 	form := url.Values{}
 	form.Set("q", q)
 	form.Set("b", "")
 	form.Set("kl", "wt-wt")
 	return form.Encode()
+}
+
+// buildNextPageBody encodes the DDG form body for pages 2+ (SearXNG mechanism).
+// Parameters:
+//   - vqd: Validation Query Digest extracted from page 1 response
+//   - offset: result offset (page 2 = 10, page 3 = 25, etc.)
+//
+// SearXNG offset formula: offset = 10 + (pageno - 2) * 15
+func buildNextPageBody(q, vqd string, offset int) string {
+	form := url.Values{}
+	form.Set("q", q)
+	form.Set("vqd", vqd)
+	form.Set("b", "")
+	form.Set("nextParams", "")
+	form.Set("api", "d.js")
+	form.Set("o", "json")
+	form.Set("v", "l")
+	form.Set("dc", fmt.Sprintf("%d", offset+1))
+	form.Set("s", fmt.Sprintf("%d", offset))
+	form.Set("kl", "wt-wt")
+	return form.Encode()
+}
+
+// extractVQDFromHTML extracts the vqd token from a DDG HTML response.
+// DDG embeds the vqd as <input name="vqd" value="..."> in the form on the
+// page. Returns empty string if not found (single-term queries, or markup drift).
+func extractVQDFromHTML(htmlStr string) string {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlStr))
+	if err != nil {
+		return ""
+	}
+	vqd, exists := doc.Find("input[name=vqd]").First().Attr("value")
+	if !exists {
+		return ""
+	}
+	return strings.TrimSpace(vqd)
 }
 
 // parseResults parses a DuckDuckGo HTML results page into []engine.Result. It
