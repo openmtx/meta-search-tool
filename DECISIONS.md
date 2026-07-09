@@ -16,29 +16,24 @@ Entry template:
 - **Status:** proposed | accepted (folded into spec §X) | rejected
 -->
 
-## 2026-07-09 — arxiv AND-term query (fixes multi-word noise flood)
-- **Context:** A live query ("What's Erling Haaland's diet?") showed arxiv
-  returning 30 loosely-matched physics papers ("ERL" = Energy Recovery Linac,
-  matching "Erling"), which at weight 1.2 crowded ddg's 10 genuinely-relevant
-  results entirely out of the top 20. Root cause (confirmed via the arXiv API
-  feed title): mst sent `search_query=all:<whole query>`, and arXiv's query
-  syntax **OR's adjacent fielded terms** — `all:What's Erling Haaland's diet?`
-  was parsed as `all:What's OR all:Erling OR all:Haaland's OR all:diet?`, so any
-  paper matching *any* word was returned.
-- **Decision:** Construct the query by explicitly AND-ing each term
-  (`all:t1 AND all:t2 AND ...`) so a paper must contain *every* query term.
-  Validated live: the Haaland query → 0 hits (honest, no flood); an in-domain
-  query ("transformer attention") → precise relevant hits; single-term queries
-  unaffected. After the fix the Haaland query's merged top-20 went from
-  `10 mojeek + 10 arxiv(noise)` to `10 mojeek + 10 ddg` — ddg surfaced.
-- **Rationale:** arXiv is a specialized academic engine; AND-ing terms makes it
-  honestly return ~0 for out-of-domain natural-language queries instead of a
-  high-count noise flood that distorts RRF ranking. This is the correct search
-  semantics (require all terms), not a hack.
-- **Status:** accepted — engine + tests updated; added `TestSearch_Live`
-  (MST_ITEST=1) asserting in-domain returns results and out-of-domain returns
-  ≤5. No spec change (§5 access notes said `search_query=all:<q>`; that was the
-  bug — the access note is now superseded by the AND construction in code).
+## 2026-07-09 — arxiv AND-term query: REVERTED (match SearXNG all:<q>)
+- **Context:** Initially fixed arxiv's OR-flooding by AND-ing terms. However,
+  checking SearXNG's `arxiv.py` revealed it uses the same standard
+  `search_query=all:<q>` pattern — our AND fix was a divergence from the
+  reference implementation.
+- **Decision:** **Reverted the AND fix.** arxiv now uses `all:<q>` like SearXNG.
+  The OR-flooding is acceptable because:
+  1. arXiv is a science/academic engine — `all:<q>` OR-matching is standard API
+     usage (published as `search_query=all:<raw>` in the API docs).
+  2. Sprint B.3.1 (engine categories) will scope arxiv to `--engine academic`,
+     preventing it from running on general-web queries entirely.
+  3. The category fix is architectural; altering query semantics would be a
+     permanent divergence from the reference implementation.
+- **Rationale:** Match SearXNG's standard `all:<q>` pattern; categories (not
+  query hacks) are the correct fix for engine-scoping problems.
+- **Status:** accepted — `buildRequestURL` reverted to `all:`+q; arxiv test
+  wantQ values reverted; live test retains in-domain assertion but removed
+  out-of-domain ≤5 check. Sprint B.3.1 tracks the categories fix.
 
 ## 2026-07-09 — ddg enabled by default (overturns §17.3 "off by default")
 - **Context:** §17.3/§5/§6 shipped `ddg` as `enabled: false` on the rationale

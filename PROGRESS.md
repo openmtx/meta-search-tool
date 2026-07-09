@@ -7,11 +7,10 @@
 
 - **Active:** Tier B, Stage 1 → Sprint B.1.6 (table format + E2E integration tests) — next
   (Sprint B.3.1 — engine categories & aliases — added after Stage 2 hardening)
-- **Last:** 2026-07-09 — arxiv AND-term query fix: arXiv OR'd multi-word queries
-  (`all:a b` → `all:a OR all:b`), flooding noise that crowded ddg out of top-20.
-  Fixed by AND-ing terms. Live-verified: out-of-domain → 0 (no flood), in-domain
-  → precise; Haaland query top-20 now `10 mojeek + 10 ddg` (was `+10 arxiv noise`).
-  361 tests green (-race) + 6 live skips (arxiv live test added).
+- **Last:** 2026-07-09 — arxiv reverted to standard `all:<q>` (matches SearXNG);
+  Sprint B.3.1 (engine categories) added to TASKS.md as the architectural fix
+  for arxiv-on-by-default noise. Live test: `--engine arxiv` returns 30 OR'd
+  results. 361 tests green (-race) + 6 live skips (arxiv live test retained).
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
   default set now has 2 keyless general-web engines. 361 tests green (-race);
@@ -85,29 +84,26 @@ The fifth Tier B knowledge engine: Grokipedia's free full-text search JSON API.
 
 ## Log
 
-## 2026-07-09 — arxiv AND-term fix + Sprint B.3.1 (engine categories) added
+## 2026-07-09 — arxiv reverted to `all:<q>` (matches SearXNG) + Sprint B.3.1 added
 
-A live query revealed arxiv's `all:<query>` construction OR's terms (per arxiv
-API behavior, also confirmed in SearXNG's arxiv.py which does the same thing),
-flooding general-web queries with loosely-matched ERL physics papers. The fix
-ANDs the terms so an out-of-domain query honestly yields ~0 results instead of
-30 noise papers. Categories/profiles (spec §17.3) will further protect against
-this by scoping arxiv to `--engine academic` only — added Sprint B.3.1 to
-implement engine group aliases.
+The initial AND-term fix was reverted after checking SearXNG's `arxiv.py` — it
+uses the same `search_query=all:<q>` pattern. Our AND fix was a divergence from
+the reference implementation. The architectural fix is engine categories
+(Sprint B.3.1) — scoping arxiv behind `--engine academic`. The standard `all:<q>`
+OR-flooding is acceptable for a science engine.
 
 - **Done:**
-  - `internal/engine/arxiv/arxiv.go`: `buildRequestURL` now joins terms with
-    ` AND ` instead of passing the raw query to arxiv's `all:` prefix.
-  - `internal/engine/arxiv/arxiv_test.go`: `wantQ` values updated to AND form;
-    gated `TestSearch_Live` added (in-domain returns results, out-of-domain ≤5).
+  - `internal/engine/arxiv/arxiv.go`: reverted `buildRequestURL` back to
+    `params.Set("search_query", "all:"+q)` — matches SearXNG exactly.
+  - `internal/engine/arxiv/arxiv_test.go`: `wantQ` values reverted to
+    `all:X Y Z` form; live test retains in-domain assertion, removed
+    out-of-domain ≤5 check.
   - `TASKS.md`: added Stage 3 / Sprint B.3.1 (engine categories & aliases)
-    between Tier B Stage 2 and Tier C.
-  - DECISIONS entry noting SearXNG parity (same `all:<q>` pattern) and that
-    our AND fix is an mst-specific optimization for on-by-default architecture.
-- **Verified:** `go test -race -count=1 ./...` → 361 PASS, 6 SKIP (arxiv live
-  test added to the 6); `MST_ITEST=1 arxiv TestSearch_Live` → in-domain:
-  precise results, out-of-domain: 0 noise; Haaland query top-20 went from
-  `10 mojeek + 10 arxiv` to `10 mojeek + 10 ddg`.
+  - DECISIONS: old entry replaced with REVERTED note.
+- **Verified:** `gofmt -l .` clean; `go build/vet` clean; `go test -race -count=1
+  ./...` → 361 PASS, 6 SKIP; `MST_ITEST=1 arxiv TestSearch_Live` → PASS;
+  `--engine arxiv "Erling Haaland diet"` → 30 OR'd results (expected, matches
+  SearXNG).
 - **Files:** arxiv.go, arxiv_test.go, TASKS.md, DECISIONS.md, PROGRESS.md.
 - **Blocked on:** nothing
 - **Next:** Sprint B.1.6 (`table` format + E2E), then B.3.1 (engine categories).
