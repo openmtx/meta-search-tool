@@ -6,10 +6,11 @@
 ## You are here — snapshot (keep current)
 
 - **Active:** Tier C → Sprint C.1.1 done. Next: Sprint C.1.2 (bing keyed API)
-  (C.1.0 ddg vqd ✅, C.1.1 google ✅)
-- **Last:** 2026-07-09 — Sprint C.1.1 complete: Google Custom Search API engine.
-  Keyed (GOOGLE_API_KEY + GOOGLE_CX), disabled by default, weight 1.0,
-  category general. 421 tests green (-race) + 7 live skips.
+  (C.1.0 ddg vqd ✅, C.1.1 google hybrid ✅)
+- **Last:** 2026-07-09 — Sprint C.1.1 complete (redesign): Google hybrid mode —
+  if GOOGLE_API_KEY + GOOGLE_CX set → official JSON API; else → HTML scrape
+  fallback (SearXNG mechanism, /url?q= unwrap, CAPTCHA detection). Descriptor:
+  keyless (works without keys). 447 tests green (-race) + 7 live skips.
 - **Last:** 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
@@ -118,6 +119,28 @@ and wired it into the full pipeline.
 - **Next:** Sprint B.3.1 (engine categories & aliases)
 
 ## Log
+
+## 2026-07-09 — Sprint C.1.1: google redesigned to hybrid API+scrape
+
+Redesigned Google engine per user request: official API when keyed, SearXNG-
+style HTML scrape fallback when not keyed.
+
+- **Done:**
+  - Rewrote `internal/engine/google/google.go`: 2-mode `fetch()`. API path
+    unchanged (GET with key/cx/q/num). Scrape path: GET google.com/search with
+    browser UA + CONSENT cookie, a[href^=/url?q=] selector, /url?q= unwrap,
+    CAPTCHA/sorry detection, multi-page pagination (start offset).
+  - Rewrote `internal/engine/google/google_test.go`: 39 tests — 20 API tests
+    (descriptor, parse, httptest, buildAPIURL, error paths, retry, SearchWithRaw)
+    + 19 scrape tests (buildScrapeURL, isGoogleSorry, unwrapGoogleURL,
+    parseScrapeResults, httptest, CAPTCHA, multi-page, context cancelled).
+  - Descriptor: `Keyed: false` (works without keys via scrape fallback).
+- **Verified:** `go test -race -count=1 ./...` → **447 PASS, 7 SKIP** (+26 net
+  from 421); `--list-engines` shows google as `keyless, disabled, weight=1.0`.
+  No env vars needed; scrape path uses browser UA + CONSENT cookie.
+- **Files:** google.go, google_test.go, TASKS.md, PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** Sprint C.1.2 — bing keyed API.
 
 ## 2026-07-09 — Sprint C.1.1: google (keyed Programmable Search API)
 

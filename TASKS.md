@@ -202,15 +202,19 @@ results); full suite 341 tests green (-race). Single page only — see follow-up
   `--limit 10`); 401 tests green (-race) + 7 skips; `ngine ddg "nvidia news"`
   returns 24 real NVIDIA news results (up from ~10).
 
-#### ✅ Sprint C.1.1 — `google` (keyed API)   ▶ complete
-- [x] `internal/engine/google/google.go` — Google Programmable Search Engine API
-- [x] `internal/engine/google/google_test.go` — 20 tests: descriptor, golden-table
-      parse (3), httptest round-trip, buildRequestURL (3 cases), error paths
-      (no-key, context cancel, HTTP 404, API auth error, malformed), retry
-      (429/5xx/exhausted/cancel-backoff/non-retryable), SearchWithRaw.
+#### ✅ Sprint C.1.1 — `google` (hybrid API + scrape)   ▶ complete
+- [x] `internal/engine/google/google.go` — hybrid mode: if GOOGLE_API_KEY +
+      GOOGLE_CX are set → official Custom Search JSON API; otherwise → HTML
+      scrape fallback (SearXNG mechanism: GET google.com/search, /url?q= URL
+      unwrap, CAPTCHA/sorry detection, CONSENT cookie bypass).
+- [x] `internal/engine/google/google_test.go` — 39 tests: descriptor, API golden
+      parse (3), API httptest, buildAPIURL (3), API error paths (5), API retry
+      (6), API SearchWithRaw, scrape buildScrapeURL (3), isGoogleSorry (4),
+      unwrapGoogleURL (3), parseScrapeResults (3), scrape httptest, scrape
+      CAPTCHA, scrape multi-page, scrape context cancelled.
 - [x] Wire into `defaultRegistry()`
 - **DoD:** `go test -race ./...` green; `--list-engines` shows `google` as
-  `disabled, keyed, weight=1.0`. 421 tests green (-race).
+  `keyless, disabled, weight=1.0`. 447 tests green (-race).
 
 #### Sprint C.1.2 — `bing` (keyed API)
 - [ ] `internal/engine/bing/bing.go` — Bing Web Search v7 API
