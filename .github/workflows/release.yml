@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          tag="${{ github.ref_name }}"
+          os="${{ matrix.os }}"
+          arch="${{ matrix.arch }}"
+          bin="mst"
+          [[ "$os" == "windows" ]] && bin="mst.exe"
+
+          go build -ldflags="-X main.version=$tag" -o "$bin" ./cmd/mst
+
+          # Package: mst-<tag>-<os>-<arch>.tar.gz or .zip
+          dir="mst-${tag}-${os}-${arch}"
+          mkdir "$dir"
+          cp "$bin" LICENSE "$dir/"
+
+          if [[ "$os" == "windows" ]]; then
+            zip -r "${dir}.zip" "$dir/"
+            echo "artifact=${dir}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${dir}.tar.gz" "$dir/"
+            echo "artifact=${dir}.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mst-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mst-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: sha256sum mst-*.* > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mst-*.*
+            SHA256SUMS.txt
+          generate_release_notes: true
