@@ -21,8 +21,11 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/retry"
 )
 
-// apiBase is the Stack Exchange API base URL. Tests override it via SetAPIBase.
-var apiBase = "https://api.stackexchange.com/2"
+// apiBase is the Stack Exchange site origin. The full API path is appended in
+// buildRequestURL (base.Path = "/2.3/search/advanced") so tests can repoint
+// apiBase at a local httptest origin and the request still carries the correct
+// path.
+var apiBase = "https://api.stackexchange.com"
 
 // userAgent is the HTTP User-Agent sent to Stack Exchange (§12).
 const userAgent = "mst/dev"
@@ -137,14 +140,16 @@ func buildRequestURL(q string, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base.Path = "/search/advanced"
+	base.Path = "/2.3/search/advanced"
 	params := base.Query()
 	params.Set("q", q)
 	params.Set("order", "desc")
 	params.Set("sort", "relevance")
 	params.Set("site", "stackoverflow")
-	params.Set("filter", "!*236cL9uK5*(T6") // default filter with body, link, title
-	params.Set("maxcount", fmt.Sprintf("%d", limit))
+	// "withbody" is a Stack Exchange filter shorthand that includes the post
+	// body (used for the snippet); the API's default filter omits body.
+	params.Set("filter", "withbody")
+	params.Set("pagesize", fmt.Sprintf("%d", limit))
 	base.RawQuery = params.Encode()
 	return base.String(), nil
 }

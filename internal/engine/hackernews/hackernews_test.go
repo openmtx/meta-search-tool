@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,10 +201,9 @@ func TestSearch_Httptest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to parse request URL: %v", err)
 		}
-		// buildRequestURL sets base.Path = "/search"; the apiBase already includes
-		// "/api/v1", so the final path is just "/search".
-		if parsed.Path != "/search" {
-			t.Errorf("path = %s, want /search", parsed.Path)
+		// buildRequestURL appends the full "/api/v1/search" path to the host.
+		if parsed.Path != "/api/v1/search" {
+			t.Errorf("path = %s, want /api/v1/search", parsed.Path)
 		}
 		ua := r.Header.Get("User-Agent")
 		if ua == "" {
@@ -214,7 +215,7 @@ func TestSearch_Httptest(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/api/v1"
+	apiBase = ts.URL
 
 	e := New()
 	results, err := e.Search(context.Background(), "go search engine", engine.Options{Limit: 10})
@@ -324,8 +325,8 @@ func TestBuildRequestURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse result URL: %v", err)
 			}
-			if parsed.Path != "/search" {
-				t.Errorf("path = %s, want /search", parsed.Path)
+			if parsed.Path != "/api/v1/search" {
+				t.Errorf("path = %s, want /api/v1/search", parsed.Path)
 			}
 			q := parsed.Query()
 			if q.Get("query") != tt.wantQ {
@@ -408,7 +409,7 @@ func TestSearch_Retry_Exhausted(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/api/v1"
+	apiBase = ts.URL
 
 	e := New()
 	results, err := e.Search(context.Background(), "go", engine.Options{Limit: 10})
@@ -420,5 +421,37 @@ func TestSearch_Retry_Exhausted(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("got %d requests, want 3 (initial + 2 retries)", count)
+	}
+}
+
+// --- Live integration test (§14, MST_ITEST=1) -------------------------------
+
+// TestSearch_Live verifies the engine against the real HN Algolia endpoint —
+// confirming the /api/v1/search path + response schema. Skipped unless
+// MST_ITEST=1.
+func TestSearch_Live(t *testing.T) {
+	if os.Getenv("MST_ITEST") != "1" {
+		t.Skip("skipping live test; set MST_ITEST=1 to hit hn.algolia.com")
+	}
+	e := New()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	results, err := e.Search(ctx, "go programming", engine.Options{Limit: 5})
+	if err != nil {
+		t.Fatalf("live hackernews search failed (endpoint/schema may have drifted): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("live hackernews search returned 0 results")
+	}
+	t.Logf("hackernews live returned %d results; first: %q <%s>",
+		len(results), results[0].Title, results[0].URL)
+	for _, r := range results {
+		if !strings.HasPrefix(r.URL, "https://news.ycombinator.com/") && !strings.HasPrefix(r.URL, "http") {
+			t.Errorf("unexpected result URL: %s", r.URL)
+		}
+		if r.Title == "" {
+			t.Errorf("empty title: %+v", r)
+		}
 	}
 }

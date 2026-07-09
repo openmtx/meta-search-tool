@@ -123,7 +123,7 @@ func (*ddg) Descriptor() engine.EngineInfo {
 		Name:          "ddg",
 		Keyed:         false,
 		KeyEnv:        "",
-		DefaultWeight: 0.5,
+		DefaultWeight: 1.0,
 		Enabled:       false, // off by default (§17.3)
 	}
 }
