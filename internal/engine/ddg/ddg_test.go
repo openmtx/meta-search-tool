@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -145,11 +146,38 @@ func TestParseResults_Captcha(t *testing.T) {
 	}
 }
 
+// === UA selection ===========================================================
+
+// TestUASelection verifies the default UA selector returns a member of the
+// browserUAs pool and that SetUASelector overrides (and restores) it.
+func TestUASelection(t *testing.T) {
+	SetUASelector(nil) // ensure the default selector is active
+	if !slices.Contains(browserUAs, uaSource()) {
+		t.Errorf("default UA %q is not in browserUAs pool", uaSource())
+	}
+
+	const fixed = "FixedUA/9.9 (ddg-unit)"
+	SetUASelector(func() string { return fixed })
+	if u := uaSource(); u != fixed {
+		t.Errorf("overridden UA = %q, want %q", u, fixed)
+	}
+	// Restoring via nil returns selection to the pool.
+	SetUASelector(nil)
+	if !slices.Contains(browserUAs, uaSource()) {
+		t.Error("after SetUASelector(nil), UA not back in browserUAs pool")
+	}
+}
+
 // === httptest round-trip ====================================================
 
 // TestSearch_Httptest verifies the request mechanics (POST, form body, browser
 // headers per docs/DDG-research.md) and result parsing end to end.
 func TestSearch_Httptest(t *testing.T) {
+	// Pin the UA for a deterministic assertion (default rotates at random).
+	const testUA = "TestBrowser/1.0 (ddg-unit)"
+	SetUASelector(func() string { return testUA })
+	defer SetUASelector(nil)
+
 	fixture := ddgResultsHTML(
 		webResult("https://en.wikipedia.org/wiki/Golang", "Golang", "Go programming language."),
 		webResult("https://go.dev/doc/", "Go Documentation", "Official Go documentation."),
@@ -163,8 +191,8 @@ func TestSearch_Httptest(t *testing.T) {
 		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
 			t.Errorf("Content-Type = %q, want application/x-www-form-urlencoded", ct)
 		}
-		if r.Header.Get("User-Agent") != ddgUA {
-			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), ddgUA)
+		if r.Header.Get("User-Agent") != testUA {
+			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), testUA)
 		}
 		// Browser headers DDG's bot blocker expects (docs/DDG-research.md).
 		if got := r.Header.Get("Sec-Fetch-Mode"); got != "navigate" {

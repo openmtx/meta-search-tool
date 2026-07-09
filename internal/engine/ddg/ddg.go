@@ -10,13 +10,17 @@
 //
 // DDG's html endpoint filters non-browser clients (a non-browser User-Agent or
 // missing Sec-Fetch headers returns an anomaly / CAPTCHA page with no results).
-// Accordingly ddg follows the SearXNG mechanism: it sends a static desktop
-// browser User-Agent plus the Sec-Fetch-*/Referer headers a real no-JS browser
-// sends on a form submit, and detects DDG's embedded CAPTCHA challenge
-// (`<form id="challenge-form">`) — surfacing it as ErrCaptcha rather than
-// silently returning zero results. This browser-UA simulation is an explicit
-// carve-out to the honest-UA policy (§12) for scrape engines; structured-API
-// engines keep the identifying `mst/<version>` UA.
+// Accordingly ddg follows the SearXNG mechanism: it sends a realistic desktop
+// browser User-Agent — rotated at random from a pool of common browser/OS
+// combinations (browserUAs) so requests distribute across DDG's per-UA
+// reputation buckets rather than always using one — plus the Sec-Fetch-*/Referer
+// headers a real no-JS browser sends on a form submit, and detects DDG's
+// embedded CAPTCHA challenge (`<form id="challenge-form">`) — surfacing it as
+// ErrCaptcha rather than silently returning zero results. This browser-UA
+// simulation is an explicit carve-out to the honest-UA policy (§12) for scrape
+// engines; structured-API engines keep the identifying `mst/<version>` UA. The
+// UA is picked once per Search call (so a future vqd multi-page sequence would
+// reuse it across that query's pages).
 //
 // # Single page
 //
@@ -33,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,12 +51,36 @@ import (
 // via SetScrapeBase.
 var scrapeBase = "https://html.duckduckgo.com/html/"
 
-// ddgUA is the static desktop browser User-Agent sent to DuckDuckGo. It is
-// static (not derived from the mst version) because DDG derives its `vqd` token
-// from query+UA and bot-blocks non-browser UAs; a realistic, stable browser UA
-// is required to pass the html endpoint's filter (§12 carve-out; see package
-// doc and docs/DDG-research.md).
-const ddgUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+// browserUAs is the pool of realistic desktop User-Agent strings ddg rotates
+// through (§12 scrape-UA carve-out). A real browser UA is required because
+// DDG's html endpoint bot-blocks identifying/non-browser UAs; rotating across
+// common browser+OS combinations spreads requests across DDG's per-UA
+// reputation buckets rather than hammering a single identity. ddg is page-1
+// only (no vqd), so the UA need not be stable across requests.
+var browserUAs = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+}
+
+// uaSource selects the User-Agent for a request. The default picks uniformly at
+// random from browserUAs; tests override it via SetUASelector for determinism.
+var uaSource = defaultUA
+
+func defaultUA() string { return browserUAs[rand.Intn(len(browserUAs))] }
+
+// SetUASelector overrides the User-Agent selector for deterministic tests. Pass
+// nil to restore the default random selection. Callers should restore the
+// original (via defer) to avoid leaking the override across tests.
+func SetUASelector(f func() string) {
+	if f == nil {
+		f = defaultUA
+	}
+	uaSource = f
+}
 
 // ddgReferer is the Referer sent with every request — the DDG html page a real
 // browser would have come from. It is a constant (not derived from scrapeBase)
@@ -132,6 +161,10 @@ func (d *ddg) fetch(ctx context.Context, q string, _ engine.Options) ([]engine.R
 
 	formBody := buildRequestBody(q)
 
+	// Pick the browser UA once for this query (forward-compatible with a future
+	// vqd multi-page sequence, which must reuse the same UA across its pages).
+	ua := uaSource()
+
 	// newReq builds a fresh POST request per retry attempt. The body is a fresh
 	// strings.Reader each call so it is re-readable across retries. DDG's html
 	// endpoint requires a realistic desktop User-Agent and the Sec-Fetch/Referer
@@ -143,7 +176,7 @@ func (d *ddg) fetch(ctx context.Context, q string, _ engine.Options) ([]engine.R
 			return nil, err
 		}
 		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		httpReq.Header.Set("User-Agent", ddgUA)
+		httpReq.Header.Set("User-Agent", ua)
 		httpReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		httpReq.Header.Set("Referer", ddgReferer)

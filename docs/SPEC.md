@@ -279,8 +279,9 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
 > **DuckDuckGo note:** DDG has no public search API; the official Instant
 > Answer API is deprecated and of limited coverage. `mst` instead drives the
 > no-JS HTML endpoint the same way SearXNG does (see `docs/DDG-research.md`): a
-> form **POST** to `html.duckduckgo.com/html/` carrying a static browser
-> `User-Agent` and browser `Sec-Fetch-*`/`Referer` headers (§12 scrape-engine
+> form **POST** to `html.duckduckgo.com/html/` carrying a browser `User-Agent`
+> (rotated at random from a pool of common browser/OS combinations) and browser
+> `Sec-Fetch-*`/`Referer` headers (§12 scrape-engine
 > carve-out), parsing the returned HTML, and detecting the embedded CAPTCHA
 > challenge (`<form id="challenge-form">`) as an engine error rather than
 > silently returning zero results. Real-world metasearch deployments pin DDG at
@@ -302,7 +303,8 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
   `..//p.s`. (Source: SearXNG `engines/mojeek.py`.)
 - **`ddg` (HTML scrape, keyless):** `POST https://html.duckduckgo.com/html/`
   (no-JS form, `application/x-www-form-urlencoded`) with body `q=<query>&b=&kl=wt-wt`
-  (page 1) and a static browser `User-Agent` + browser headers
+  (page 1) and a browser `User-Agent` (rotated at random from a pool of common
+  browser/OS combinations) + browser headers
   (`Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: same-origin`,
   `Sec-Fetch-User: ?1`, `Referer: https://html.duckduckgo.com/html/`). Selectors
   (port to Go + goquery, reverse-engineered from live markup): container
@@ -642,14 +644,18 @@ would need a different merge strategy and is deferred (§18).
 - User-Agent: **structured-API engines** send `mst/<version>` — an honest,
   identifiable UA. Trade-off: it is trivially blockable (a single filter denies
   `mst/*`), accepted because the API engines don't filter on UA. **Scrape
-  engines** are exempted and may send a static realistic browser UA plus the
-  `Sec-Fetch-*`/`Referer` headers a real browser sends, because some scraped
-  endpoints bot-block identifying/non-browser UAs. `ddg` does so — a non-browser
-  UA returns DDG's anomaly/CAPTCHA page with no results (see the `ddg` access
-  notes in §5 and `docs/DDG-research.md`) — and detects the embedded CAPTCHA
-  challenge, reporting it as an engine error rather than silently returning zero
-  results. `mojeek` keeps the honest UA for now (it is scrape-tolerant). Making
-  the UA configurable (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
+  engines** are exempted and may send a realistic browser UA — **rotated at
+  random from a pool of common browser/OS combinations**, so requests spread
+  across the target's per-UA reputation buckets rather than always using one —
+  plus the `Sec-Fetch-*`/`Referer` headers a real browser sends, because some
+  scraped endpoints bot-block identifying/non-browser UAs. `ddg` does so — a
+  non-browser UA returns DDG's anomaly/CAPTCHA page with no results (see the
+  `ddg` access notes in §5 and `docs/DDG-research.md`) — picks one UA per query
+  (so a future `vqd` multi-page sequence reuses it across that query's pages),
+  and detects the embedded CAPTCHA challenge, reporting it as an engine error
+  rather than silently returning zero results. `mojeek` keeps the honest UA for
+  now (it is scrape-tolerant). Making the UA user-configurable
+  (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
 - Outbound requests limited to configured engine endpoints; no arbitrary URLs.
 - TLS verification always on; no option to disable.
 
@@ -783,9 +789,9 @@ Tracked explicitly so they don't get lost:
   differ in content). The tracking-param set is fixed in v1; making it
   user-configurable is deferred.
 - **HTTP User-Agent:** structured-API engines fixed to `mst/<version>` (§12);
-  scrape engines use a static browser UA (§12 carve-out — `ddg`; `mojeek`
-  keeps the honest UA for now). Making the UA configurable
-  (`MST_USER_AGENT` / `http.user_agent`) and scrape-UA rotation are deferred.
+  scrape engines send a realistic browser UA **rotated from a pool** (§12
+  carve-out — `ddg`; `mojeek` keeps the honest UA for now). Making the UA
+  user-configurable (`MST_USER_AGENT` / `http.user_agent`) remains deferred.
 - **Domain boosts:** deferred to post-v1; design how they interact with RRF.
 - **Search profiles (§19):** **term resolved → `--profile`** (shorter, less
   jargony than `--topic`/`--vertical`); still open — whether profiles are
