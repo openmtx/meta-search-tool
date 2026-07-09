@@ -20,6 +20,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/arxiv"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/google"
 	"github.com/openmtx/meta-search-tool/internal/engine/grokipedia"
 	"github.com/openmtx/meta-search-tool/internal/engine/hackernews"
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
@@ -69,6 +70,9 @@ func defaultRegistry() *engine.Registry {
 	}
 	if err := reg.Register(ddg.New()); err != nil {
 		panic("ddg: " + err.Error())
+	}
+	if err := reg.Register(google.New()); err != nil {
+		panic("google: " + err.Error())
 	}
 	return reg
 }
@@ -298,17 +302,15 @@ func resolveQuery(flags *cli.Flags, stdin io.Reader) (string, error) {
 }
 
 // validateFormat checks the --format value and the --raw / --no-merge modes
-// (§10). --no-merge works with json/jsonl/text. --raw is JSON-only; combined
+// (§10). --no-merge works with json/jsonl/text/table. --raw is JSON-only; combined
 // with text/table/jsonl it is a usage error (§10). --raw implies --no-merge, so
-// both being set is allowed (--raw wins). table is v0.2 in all modes.
+// both being set is allowed (--raw wins).
 func validateFormat(flags *cli.Flags) error {
 	switch flags.Format {
-	case "json", "jsonl", "text":
+	case "json", "jsonl", "text", "table":
 		// supported
-	case "table":
-		return fmt.Errorf("--format table is not yet implemented (planned for v0.2)")
 	default:
-		return fmt.Errorf("unknown --format %q (valid: json | jsonl | text)", flags.Format)
+		return fmt.Errorf("unknown --format %q (valid: json | jsonl | text | table)", flags.Format)
 	}
 	if flags.Raw && flags.Format != "json" {
 		return fmt.Errorf("--raw is only compatible with --format json, got %s", flags.Format)
@@ -323,8 +325,6 @@ func validateListFormat(format string) error {
 	switch format {
 	case "json", "jsonl", "text":
 		return nil
-	case "table":
-		return fmt.Errorf("--format table is not yet implemented (planned for v0.2)")
 	default:
 		return fmt.Errorf("unknown --format %q (valid: json | jsonl | text)", format)
 	}
