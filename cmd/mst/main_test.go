@@ -35,9 +35,13 @@ type fakeEngine struct {
 
 func (f *fakeEngine) Name() string { return f.name }
 func (f *fakeEngine) Descriptor() engine.EngineInfo {
+	cat := f.category
+	if cat == "" {
+		cat = "general"
+	}
 	return engine.EngineInfo{
 		Name: f.name, Keyed: f.keyed, KeyEnv: f.keyEnv,
-		DefaultWeight: f.weight, Enabled: f.enabled, Category: f.category,
+		DefaultWeight: f.weight, Enabled: f.enabled, Category: cat,
 	}
 }
 func (f *fakeEngine) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
@@ -568,7 +572,7 @@ func TestRun_Raw_ImpliesNoMerge(t *testing.T) {
 	reg := engine.NewRegistry()
 	reg.Register(wikipedia.New())
 
-	code, out, _ := runWith(t, []string{"--raw", "--no-merge", "q"}, reg, "")
+	code, out, _ := runWith(t, []string{"--raw", "--no-merge", "-e", "wikipedia", "q"}, reg, "")
 	if code != 0 {
 		t.Fatalf("exit=%d, want 0", code)
 	}
@@ -922,7 +926,7 @@ func TestRun_Wikipedia_E2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, out, errs := runWith(t, []string{"-n", "5", "test query"}, reg, "")
+	code, out, errs := runWith(t, []string{"-n", "5", "-e", "wikipedia", "test query"}, reg, "")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
 	}

@@ -6,35 +6,39 @@ description: >-
   emits JSON. Use for current web info, facts, docs, or URLs — not for
   reading page bodies (call a fetch tool on returned URLs).
 license: Apache-2.0
-compatibility: Requires `mst` on PATH. Get it via `source <(curl -sL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/setup.sh)` or `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`.
+compatibility: Requires `mst` on PATH. Get it from GitHub Releases (https://github.com/openmtx/meta-search-tool/releases) or `go install github.com/openmtx/meta-search-tool/cmd/mst@latest` (needs Go).
 ---
 
 # web-search (mst)
 
 ## Setup
 
+`mst` must be on PATH. The skill does not install it — obtain it yourself:
+
+- **Prebuilt binary (no Go needed):** download from
+  [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases) —
+  pick the archive for your OS/arch (`linux`/`darwin`/`windows` ×
+  `amd64`/`arm64`), extract, and put `mst` on your PATH.
+- **From source (needs Go):**
+  `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`
+
+Verify:
 ```bash
-# Check if already on PATH:
-mst --list-engines   # shows available engines and their status
-
-# Or download the binary for this platform (cached, re-run to update):
-source <(curl -sL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/setup.sh)
-
-# Install from source (needs Go):
-go install github.com/openmtx/meta-search-tool/cmd/mst@latest
+mst --version        # installed and on PATH
+mst --list-engines   # engines, status, effective weights
 ```
 
-If download/install fails, no fallback — mst is required. Get the binary from
-[GitHub Releases](https://github.com/openmtx/meta-search-tool/releases).
+A keyed engine without its env var (e.g. `BRAVE_API_KEY`) is auto-skipped,
+not an error — unless named in `--require`.
 
 ## Usage
 
-**Preferred (results only):**
+**Results only (cheap on context):**
 ```bash
 mst --format jsonl --limit 10 "<query>"
 ```
 
-**Full envelope (with per-engine status):**
+**Full envelope (per-engine status + score):**
 ```bash
 mst --format json --limit 10 "<query>"
 ```
@@ -44,7 +48,7 @@ mst --format json --limit 10 "<query>"
 mst --engine brave,wikipedia --weight brave=2.0 "<query>"
 ```
 
-**Pagination (best-effort):**
+**Pagination (best-effort, stateless):**
 ```bash
 mst --limit 10 --offset 10 "<query>"
 ```
@@ -54,21 +58,33 @@ mst --limit 10 --offset 10 "<query>"
 printf '%s' "<long query>" | mst --stdin --format jsonl
 ```
 
-## Profiles — pick the right engines
+Use `jsonl` when you just need hits; use `json` when you want `score`/`engines[]`
+to reason about quality.
 
-| Task | `--engine` | Targets |
-|------|------------|---------|
-| Broad web search | *(default)* | brave, bing, google, ddg, mojeek, tavily |
-| Facts / reference | `reference` | wikipedia, grokipedia |
-| Research papers | `academic` | arxiv, pubmed |
-| Tech news | `news` | hackernews |
-| Programming Q&A | `'q&a'` | stackexchange |
-| Zero-setup (keyless) | `free` | all keyless engines |
-| Maximum coverage | `all` | everything |
+## Engines
+
+No `--engine` flag runs the **default-on set**: `brave` (skips without
+`BRAVE_API_KEY`), `ddg`, `wikipedia`, `arxiv`, `pubmed`, `stackexchange`.
+`--engine` selects a category or alias (compose with engine names; duplicates
+removed):
+
+| `--engine` | Engines |
+|------------|---------|
+| `general` | brave, ddg, mojeek, google, bing, tavily |
+| `reference` | wikipedia, grokipedia |
+| `academic` | arxiv, pubmed |
+| `news` | hackernews |
+| `'q&a'` | stackexchange *(quote it; `&` is a shell operator)* |
+| `free` | all keyless engines |
+| `all` | every registered engine |
+
+Off by default (opt-in via config or `-e`): `mojeek`, `google`, `bing`,
+`tavily`, `hackernews`, `grokipedia`. Keyed (auto-skip without their env var):
+`brave`, `bing`, `tavily`. Inspect live state with `mst --list-engines`.
 
 ```bash
 mst --engine academic "vision transformer 2025"
-mst --engine academic,brave "transformer attention"       # compose with general web
+mst --engine academic,brave "transformer attention"   # compose with general web
 mst --engine free "best espresso grinder"
 ```
 
@@ -78,15 +94,22 @@ mst --engine free "best espresso grinder"
 |------|---------|--------|
 | 0 | success | — |
 | 1 | zero results | broaden query, add engines, raise `--limit` |
-| 2 | bad flags / missing key | fix command |
-| 3 | some engines failed | stdout still has results; `--exclude` the flaky one |
+| 2 | bad flags / config error / missing key for a `--require`'d engine | fix command |
+| 3 | a `--require`'d engine ran but failed, or `--strict` and an engine failed | stdout still has results; `--exclude` the flaky one |
 
-Error details are JSON on stderr. Exit 1/3: stdout is still valid JSON.
+Error details are a JSON object on stderr (`{"error":{...}}`). On exits 1 and 3,
+stdout is still a complete, valid JSON payload; only exit 2 writes nothing to
+stdout — parse stdout unconditionally on any non-2 exit.
 
 ## Flags
 
+**Tier 1 — routine use (the only flags you normally need):**
 `<query>` (positional), `--stdin`, `-e/--engine`, `--exclude`, `-n/--limit`,
 `--offset`, `-f/--format`, `--weight`, `--list-engines`, `--version`.
-Avoid debug flags (`--raw`, `--no-merge`, `--rrf-k`, `--require`, `--strict`,
-`--timeout`, `--per-engine-timeout`, `--config`, `--verbose`) unless diagnosing
-mst itself.
+
+**Tier 2 — tuning (use only when you need them):**
+`--rrf-k` (ranking smoothing), `--require` (engine must run or exit), `--strict`
+(exit 3 on any engine failure), `--timeout` (run budget).
+
+**Tier 3 — debug/internal (avoid; humans only):**
+`--raw`, `--no-merge`, `--per-engine-timeout`, `--config`, `--verbose`.

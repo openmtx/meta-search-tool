@@ -75,7 +75,7 @@ cat query.txt | mst --stdin
 |------|---------|-------------|
 | `-q, --query` | — | The search query (also accepted as positional args, joined by space). Specifying both `--query` and positional args is a usage error (exit 2). |
 | `--stdin` | `false` | Read the query from stdin. |
-| `-e, --engine` | *all enabled* | Comma-separated subset of engines to use (e.g. `brave,ddg`). |
+| `-e, --engine` | *general* | Comma-separated subset of engines to use (e.g. `brave,ddg`). Defaults to the `general` category (`brave`, `ddg`). Use `--engine all` or name specific engines to expand beyond general web. |
 | `--exclude` | — | Comma-separated engines to disable for this run. |
 | `-n, --limit` | `10` | Max number of merged results to return. |
 | `--offset` | `0` | Skip the first N merged results (best-effort pagination; see below). |
@@ -105,14 +105,17 @@ error regardless of source. An empty or whitespace-only positional query (e.g.
 exit `2`. `--list-engines` and `--version` short-circuit before query
 resolution.
 
-**Engine selection precedence:** `--engine` sets the active set (whitelist);
-`--exclude` then removes engines from that set (so `--exclude` wins on conflict).
-A keyed engine missing its key is auto-skipped unless named in `--require`. An
-**unknown engine name** (not in the registry) in `--engine`, `--exclude`, or
-`--require` is a usage error → exit `2`, with the valid engine names listed in the
-structured error message so the caller can self-correct — the same shape as the
-`--weight` unknown-name rule below (e.g. `unknown engine 'bogus'; valid: brave,
-mojeek, wikipedia, …`).
+**Engine selection precedence — default scope:** when no `--engine` flag is
+specified, the search scope defaults to the `general` category (`brave`, `ddg`;
+the `general` category table in §5). Use `--engine` to select a different
+category (`--engine academic`), a custom set (`--engine brave,wikipedia`), or
+all engines (`--engine all`). `--exclude` then removes engines from the active
+set (so `--exclude` wins on conflict). A keyed engine missing its key is
+auto-skipped unless named in `--require`. An **unknown engine name** (not in the
+registry) in `--engine`, `--exclude`, or `--require` is a usage error → exit `2`,
+with the valid engine names listed in the structured error message so the caller
+can self-correct — the same shape as the `--weight` unknown-name rule below
+(e.g. `unknown engine 'bogus'; valid: brave, mojeek, wikipedia, …`).
 
 **Weight semantics:** `--weight ENGINE=FLOAT` overrides *only* the named
 engine's weight; all other engines keep their configured/default weights (it
@@ -256,7 +259,7 @@ engines in that category, and built-in group aliases for property-based selectio
 
 | Category | Engines |
 |----------|---------|
-| `general` | `brave`, `ddg` |
+| `general` | `brave`, `ddg`, `google` (triple-mode hybrid, on by default; keyless public CSE) |
 | `reference` | `wikipedia`, `grokipedia` |
 | `academic` | `arxiv`, `pubmed` |
 | `news` | `hackernews` ⚠️ (disabled by default) |
@@ -288,7 +291,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `ddg` (DuckDuckGo) | ✅ | none | HTML scrape; **best-effort** (see note). On by default. |
-| `google` | ✅ | `GOOGLE_API_KEY` (optional) + `GOOGLE_CX` (optional — built-in default CX for keyless public CSE) | Triple-mode hybrid: official REST API → public CSE (SearXNG-style, keyless, built-in CX) → HTML scrape fallback. |
+| `google` | ✅ | `GOOGLE_API_KEY` (optional) + `GOOGLE_CX` (optional — built-in default CX for keyless public CSE) | Triple-mode hybrid: official REST API → public CSE (SearXNG-style, keyless, built-in CX) → HTML scrape fallback. On by default. |
 | `bing` | ❌ | `BING_API_KEY` | Bing Web Search v7 (keyed API). |
 
 ### Tier D — AI-oriented (answer/summary modes; under evaluation)
@@ -426,7 +429,7 @@ engines:
   wikipedia:    { weight: 1.5, enabled: true,  timeout: 3s }
   mojeek:       { weight: 1.3, enabled: false, timeout: 4s }   # disabled by default (SearXNG compat)
   ddg:          { weight: 1.0, enabled: true,  timeout: 3s }   # scrape (SearXNG mechanism); on by default
-  google:       { weight: 1.0, enabled: false, api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }  # cx_env optional (built-in default CX for keyless public CSE)
+  google:       { weight: 1.0, enabled: true,  api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }  # cx_env optional (built-in default CX for keyless public CSE)
   bing:         { weight: 1.0, enabled: false, api_key_env: BING_API_KEY }
   tavily:       { weight: 1.2, enabled: false, api_key_env: TAVILY_API_KEY }
 ```
@@ -785,19 +788,23 @@ meta-search-tool/
 
 1. **Language:** Go.
 2. **Config format:** YAML (`gopkg.in/yaml.v3`).
-3. **Default enabled engines (SearXNG-compatible):** the default-on set follows
-   SearXNG's own defaults:
+3. **Default enabled engines & scope (SearXNG-compatible):** the default search
+   scope when no `--engine` flag is given is the `general` category (`brave`,
+   `ddg` — see the category table in §5 and the `--engine` default in §4). This
+   replaces the earlier "all enabled engines" default; use `--engine all` to run
+   every enabled engine, or `--engine academic` / `--engine reference` to select
+   a vertical.
+
+   The underlying default-enabled set mostly follows SearXNG's defaults, with
+   google enabled as an exception (public CSE token mode works keyless via the
+   built-in CX):
    - **Enabled by default:** `wikipedia`, `arxiv`, `pubmed`, `stackexchange`,
      `brave` (auto-skips if no key), `ddg` (keyless general-web, SearXNG-mechanism
-     scrape).
+     scrape), `google` (triple-mode hybrid; keyless via public CSE with built-in CX).
    - **Disabled by default:** `mojeek` (SearXNG compat), `hackernews` (SearXNG
-     compat), `grokipedia` (SearXNG — inactive/experimental), `google` (inactive
-     in SearXNG; effectively keyless via public CSE — enable for keyless
-     Google results with the built-in CX), `bing` (disabled in SearXNG), `tavily`
-     (not in SearXNG, opt-in).
+     compat), `grokipedia` (SearXNG — inactive/experimental), `bing` (disabled
+     in SearXNG), `tavily` (not in SearXNG, opt-in).
    - All keyed/paid engines (`bing`, `tavily`) are opt-in until enabled with keys.
-     `google` is effectively keyless via the built-in public CX (same SearXNG
-     approach); enable with `--engine google` or `google.enabled: true`.
    Default *weights* follow the §5 tiers (high for reliable/structured), so a fresh
    install is useful for LLM grounding without per-call tuning.
 4. **RRF constant `k`:** `60` default, tunable per call via `--rrf-k`.
@@ -897,9 +904,10 @@ equally, applies:
   (e.g. `academic` → `research OR study`; or domain filters via `site:`).
 - **(Possibly) per-profile domain boosts**, interacting with RRF (§18).
 
-**General search stays the no-op default** (all enabled engines, no
-augmentation). Selecting a profile is explicit, e.g. `mst --profile scholar
-"transformer attention"`. Profile weights sit at the **config layer** in the
+**General search is the default** — the `general` category (`brave`, `ddg`)
+selected by the `--engine general` implicit default (see §4). Selecting a
+profile is explicit, e.g. `mst --profile scholar "transformer attention"`.
+Profile weights sit at the **config layer** in the
 precedence chain (§6): an explicit per-call `--weight ENGINE=FLOAT` always
 overrides the profile's weight for that engine. True to `mst`'s transparency principle, the output
 envelope will report the **effective query** (post-augmentation) plus which

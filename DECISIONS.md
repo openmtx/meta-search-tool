@@ -574,3 +574,54 @@ element casing ensures correct deserialization.
   `--help` tier grouping implemented in A.2.2. All are now shipped — no
   remaining A.2.2 blockers.
 - **Status:** resolved — all items implemented in A.2.2; no spec change needed.
+
+## 2026-07-09 — default search scope: 'general' category (§4)
+- **Context:** User requested making the `general` category/profile the default
+  for searching. Previously, no `--engine` flag meant all enabled engines ran.
+  This was inconsistent with the v1.0 scope ("general web search only") and
+  the planned search profiles feature (§19).
+- **Decision:** When no `--engine` is specified, the search scope is limited to
+  the `general` category (`brave`, `ddg`; see category table in §5). Use
+  `--engine all` to run every enabled engine, or any explicit `--engine` to
+  select a different set. The category filter is applied in `computeStates`
+  (resolve.go) as a default scope, between the config layer and the explicit
+  whitelist layer in the enabled-computation precedence chain: default → config
+  → **category default** → --engine whitelist → --exclude. An explicit --engine
+  overrides the category default entirely.
+- **Rationale:** Aligns the default scope with v1.0's "general web search only"
+  scope. The `general` category (brave + ddg) covers the most common use case
+  (general web search) while keeping the tool lightweight by default — no
+  reference/academic/news engines run unless explicitly requested. This is a
+  natural precursor to the planned `--profile` feature (§19).
+- **Spec changes:** §4 — `--engine` default changed from `*all enabled*` to
+  `*general*`; engine selection precedence amended to describe the category
+  default; §19 — "General search stays the no-op default" updated to reflect
+  the `general` category default. §17.3 — default-on set description updated.
+- **Code changes:** `computeStates` in `cmd/mst/resolve.go` — added
+  `useGeneralOnly` flag that filters to `category == "general"` when no
+  `--engine` whitelist is present. `fakeEngine.Descriptor()` in
+  `cmd/mst/main_test.go` — defaults empty category to `"general"` for test fakes.
+  Two tests that relied on non-general engines by default (`TestRun_Raw_ImpliesNoMerge`,
+  `TestRun_Wikipedia_E2E`) updated to pass `-e wikipedia`.
+- **Status:** accepted — code and spec updated.
+
+## 2026-07-09 — google enabled by default in general category (§5)
+- **Context:** After making the `general` category the default search scope, the
+  user requested enabling `google` in the general profile, positioned after `ddg`
+  in registration order (which it already is — ddg at 9, google at 10 in
+  `defaultRegistry()`). Google has three search modes (official API → public CSE
+  token → HTML scrape). The public CSE token mode is keyless via the built-in CX
+  (blackle.com's public CSE), so google works out of the box without any env vars.
+- **Decision:** Toggled `google`'s `Enabled` from `false` to `true` in its
+  `Descriptor()`. This deviates from SearXNG compat (SearXNG has google as
+  `inactive`/disabled) but is justified because the public CSE token mode works
+  reliably and keylessly, and the user explicitly wants it in the default scope.
+- **Spec changes:** §5 category table — `general` updated: `brave, ddg` →
+  `brave, ddg, google`. §5 Tier C table — google note: added "On by default."
+  §6 config example — `enabled: false` → `enabled: true`. §17.3 — default-on
+  set: google moved from "disabled" to "enabled", with a note that this is an
+  exception to SearXNG compat.
+- **Code changes:** `google.Descriptor()` Enabled: `false` → `true`
+  (`internal/engine/google/google.go`). `TestDescriptor` updated to expect
+  `Enabled == true` (`internal/engine/google/google_test.go`).
+- **Status:** accepted — code and spec updated.

@@ -10,6 +10,8 @@
 - **Last:** 2026-07-09 — Sprint D.1.2 — tavily follow-ups: include_answer, search_depth ✅
 - **Last:** 2026-07-09 — Sprint D.1.1 — tavily keyed API engine ✅
 - **Last:** 2026-07-09 — Sprint B.2.1 — table format polish + live tests ✅
+- **Last:** 2026-07-09 — Default search scope changed to 'general' category (brave, ddg)
+- **Last:** 2026-07-09 — google enabled by default in general category (keyless public CSE)
 
 ## 2026-07-09 — Sprint C.1.4: Google public CSE token mode (SearXNG-style, keyless)
 
@@ -1179,3 +1181,54 @@ The merged-result pipeline (§4/§7/§9/§10/§11). Four logical commits:
 - **Blocked on:** review of decision (b) — the rest are accepted/in-plan.
 - **Next:** Stage 1 — Sprint A.1.1 `brave` (keyed; httptest fixture; auto-skip
   without `BRAVE_API_KEY`; `MST_ITEST=1` smoke when keyed).
+
+## 2026-07-09 — Default search scope: 'general' category (§4)
+
+Changed the default search scope from "all enabled engines" to the `general`
+category only (`brave`, `ddg`). This aligns the default behavior with v1.0's
+"general web search only" scope and is a precursor to the planned `--profile`
+feature.
+
+**Done:**
+- `computeStates` in `cmd/mst/resolve.go` — `useGeneralOnly` flag filters to
+  `category == "general"` when no `--engine` whitelist is set
+- `fakeEngine.Descriptor()` in `cmd/mst/main_test.go` — defaults empty category
+  to `"general"` for test fakes
+- Updated two tests (`TestRun_Raw_ImpliesNoMerge`, `TestRun_Wikipedia_E2E`) to
+  pass `-e wikipedia` explicitly
+- Spec §4 — `--engine` default: `
+*all enabled*`→`*general*`; selection precedence updated
+- Spec §19 — "General search stays the no-op default"→"General search is the
+  default" with `general` category
+- Spec §17.3 — default-on set description updated
+- DECISIONS.md — entry added
+
+**Tests:** 0 before, 0 new; 2 updated. Full suite: all green (52 cmd/mst tests).
+
+**Files changed:**
+- `cmd/mst/resolve.go` (computeStates logic)
+- `cmd/mst/main_test.go` (fakeEngine category default; 2 test flag updates)
+- `docs/SPEC.md` (§4 flag table, engine selection precedence, §19, §17.3)
+- `DECISIONS.md` (decision entry)
+- `PROGRESS.md` (this entry)
+
+## 2026-07-09 — google enabled by default in general category
+
+Enabled `google` in the `general` category (it was disabled by default for SearXNG
+compat). Google's public CSE token mode works keylessly via the built-in CX
+(blackle.com's Programmable Search Engine), so it works out of the box.
+
+**Done:**
+- `google.Descriptor().Enabled` toggled `false` → `true`
+- Registration order: ddg (9) before google (10) — already correct, no change needed
+- `TestDescriptor` updated to expect `Enabled == true`
+- Spec §5: general category table, Tier C table; §6 config example `enabled: false → true`;
+  §17.3 default-on set updated
+- DECISIONS.md entry added
+
+**Files changed:**
+- `internal/engine/google/google.go` (Descriptor enabled toggle)
+- `internal/engine/google/google_test.go` (TestDescriptor assertion)
+- `docs/SPEC.md` (category table, config example, §17.3)
+- `DECISIONS.md` (decision entry)
+- `PROGRESS.md` (this entry)
