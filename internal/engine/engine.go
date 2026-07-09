@@ -32,8 +32,14 @@ type Result struct {
 // Options carries engine inputs. Limit is the per-engine FETCH cap derived
 // in §9 (max(--limit*3, 20)) — NOT the user's --limit which bounds only the
 // final merged output.
+//
+// IncludeAnswer and SearchDepth are tavily-specific options (§5 Tier D) that
+// control whether the API returns an AI-generated answer and the search depth
+// ("basic" or "advanced"). They are zero-valued for other engines.
 type Options struct {
-	Limit int
+	Limit         int
+	IncludeAnswer bool   // Tavily: request AI-generated answer in response
+	SearchDepth   string // Tavily: "basic" (default) or "advanced"
 }
 
 // EngineInfo is static, compile-time metadata declared by each engine. The

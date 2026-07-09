@@ -5,12 +5,210 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier C → Sprint C.1.1 done. Next: Sprint C.1.2 (bing keyed API)
-  (C.1.0 ddg vqd ✅, C.1.1 google hybrid ✅)
-- **Last:** 2026-07-09 — Sprint C.1.1 complete (redesign): Google hybrid mode —
-  if GOOGLE_API_KEY + GOOGLE_CX set → official JSON API; else → HTML scrape
-  fallback (SearXNG mechanism, /url?q= unwrap, CAPTCHA detection). Descriptor:
-  keyless (works without keys). 447 tests green (-race) + 7 live skips.
+- **Active:** Sprint C.1.4 — Google CSE public CSE token mode (SearXNG-style, keyless) ✅
+- **Last:** 2026-07-09 — Google CSE public CSE token mode merged into hybrid `google` engine
+- **Last:** 2026-07-09 — Sprint D.1.2 — tavily follow-ups: include_answer, search_depth ✅
+- **Last:** 2026-07-09 — Sprint D.1.1 — tavily keyed API engine ✅
+- **Last:** 2026-07-09 — Sprint B.2.1 — table format polish + live tests ✅
+
+## 2026-07-09 — Sprint C.1.4: Google public CSE token mode (SearXNG-style, keyless)
+
+Added SearXNG's `google_cse`-style public CSE token approach as a third mode in the
+hybrid `google` engine. Users now get keyless Google results out of the box with the
+built-in public CX (blackle.com's Programmable Search Engine, same as SearXNG).
+
+- **Done:**
+  - **Triple-mode dispatch in `fetch()`:** official API (GOOGLE_API_KEY+GOOGLE_CX both
+    set) → public CSE token (CX available from env var or built-in default) → HTML
+    scrape (fallback, requires default CX cleared).
+  - **`fetchPublicCSE()`:** two-step SearXNG-style flow:
+    1. `GET google.com/cse/cse.js?cx=<CX>` → JSONP with `cse_token`, token cached 1h
+       (sync.Mutex-guarded, `ResetCSETokenCache()` for deterministic tests).
+    2. `GET cse.google.com/cse/element/v1?rsz=filtered_cse&num=20&hl=en&cselibv=...&cx=...&q=...&safe=medium&cse_tok=...&callback=_`
+  - **`cseTokenCache` struct** with 1-hour TTL, thread-safe via `sync.Mutex`.
+  - **Response types:** `cseResponse{Results,Error}`, `cseResult{UnescapedURL,TitleNoFormatting,
+    ContentNoFormatting}`, `cseAPIError{Code,Message}`.
+  - **JSONP parsing:** `stripJSONP()` removes callback wrapper (`_(...)` → `{...}`).
+    Token fetch uses specific `({...})` extraction (SearXNG's approach).
+  - **Set/Get test hooks:** `SetCSETokenBase`, `SetCSESearchBase`, `SetDefaultPublicCX`,
+    `ResetCSETokenCache`, `CSETokenBase`, `CSESearchBase`, `DefaultPublicCX`.
+  - **Default CX:** `defaultPublicCX = "partner-pub-8993703457585266:4862972284"`
+    (blackle.com, same as SearXNG).
+  - **Effective routing check:** `fetch()` checks `effectiveCX()` which returns env var
+    `GOOGLE_CX` if set, else the built-in default.
+  - **Scrape tests preserved:** all scrape tests call `scrapeOnly(t)` helper which clears
+    the default CX so `fetch()` falls through to scrape.
+  - **New CSE tests (15 subtests):**
+    - `TestParseCSEResults`: Normal (2 results), empty, skip-empty-URL
+    - `TestStripJSONP`: Standard callback, nested braces, no wrapper
+    - `TestBuildCSESearchURL`: Verifies all query params
+    - `TestFetchCSEToken`: httptest round-trip with token, missing-token error
+    - `TestCSEToken_Cache`: First call fetches, second uses cache
+    - `TestSearch_CSE_Httptest`: Full httptest round-trip with token + search servers
+    - `TestSearch_CSE_Error`: CSE search error response
+    - `TestSearch_CSE_SearchWithRaw`: Raw payload from CSE path
+    - `TestSearch_CSE_ContextCancelled`: Cancellation before routing
+  - **Spec updates:** §5 Tier C table (google now ✅ keyless, triple-mode hybrid),
+    §5 access notes (full google access note with all 3 modes detailed),
+    §6 config example (cx_env optional note), §17.3 (disabled-by-default reasoning
+    updated to mention public CSE).
+  - **DECISIONS.md:** New entry documenting Option A (merged) vs Option B (separate)
+    and implementation details.
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **20 packages, all green**
+- **Files:** `internal/engine/google/google.go`, `google_test.go`, `docs/SPEC.md`,
+  `DECISIONS.md`, `PROGRESS.md`.
+- **Blocked on:** nothing
+- **Next:** Tag v0.3 or continue with remaining Sprint items.
+
+## 2026-07-09 — Sprint D.1.2: tavily follow-ups (include_answer, search_depth, answer field)
+
+Implemented Tavily follow-up options per §5 Tier D: `include_answer` and `search_depth`
+parameters, with config file support and answer field handling in the output envelope.
+
+- **Done:**
+  - **`engine.Options`:** Added `IncludeAnswer bool` and `SearchDepth string` fields for
+    passing tavily-specific options through the dispatch pipeline.
+  - **`config.EngineConfig`:** Added `IncludeAnswer *bool` and `SearchDepth string` YAML
+    fields for per-engine configuration via config file:
+    `engines.tavily.include_answer: true`, `engines.tavily.search_depth: advanced`.
+  - **`internal/search/search.go`:** Added `engineOpts map[string]engine.Options` parameter
+    to `Dispatch` and `DispatchRaw` functions, passed through to `runOne`.
+  - **`cmd/mst/resolve.go`:** Added `engineOpts` to `plan` struct; populated from
+    `cfg.Engines` in `resolvePlan`.
+  - **`cmd/mst/main.go`:** Pass `p.engineOpts` to all 3 dispatch call sites (raw,
+    no-merge, merged). Added `extractTavilyAnswer()` to extract answer from tavily raw
+    payload; passed to `BuildEnvelope`.
+  - **`internal/engine/tavily/tavily.go`:**
+    - Uses `opts.IncludeAnswer` and `opts.SearchDepth` in the API request body.
+    - `apiResponse.Answer` field added to parse the AI-generated answer.
+    - `GetAnswerFromRaw(raw)` helper for extracting answer from raw payload.
+  - **`internal/format/format.go`:** Added `Answer string \`json:"answer,omitempty"\`` to
+    `Envelope` — surfaced as top-level field in JSON output, NOT composed with RRF.
+  - **Tests:** 13 new tests (35 total tavily tests):
+    - `TestSearch_IncludeAnswer`: verify `include_answer: true` in request body
+    - `TestSearch_IncludeAnswerDefault`: verify `include_answer: false` by default
+    - `TestSearch_SearchDepthAdvanced`: verify `search_depth: "advanced"` in request body
+    - `TestSearch_SearchDepthEmpty`: verify `search_depth` omitted when empty
+    - `TestSearch_AnswerInResponse`: verify answer field in raw payload with `include_answer`
+    - `TestSearch_AnswerEmptyWhenNotRequested`: no answer when not requested
+    - `TestGetAnswerFromRaw`: 5 cases (answer present, no field, nil, wrong type, not string)
+- **Decision:** The AI-generated `answer` field is surfaced as a separate top-level field in
+  the output envelope (`Envelope.Answer`). It does NOT compose with RRF — the summarized
+  answer is not a search result and should not be ranked or scored. Available in `--format json`
+  merged output when tavily returns an answer. (Logged in DECISIONS.md 2026-07-09.)
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **20 packages, all green**; tavily: 35 tests
+- **Files:** engine.go, config.go, search.go, resolve.go, main.go, tavily.go, tavily_test.go,
+  format.go, format_test.go, table_test.go, search_test.go, TASKS.md, PROGRESS.md,
+  DECISIONS.md
+- **Blocked on:** nothing
+- **Next:** Stage 2 hardening (Tier B/C/D) or release tagging (v0.3)
+
+## 2026-07-09 — Sprint D.1.1: `tavily` (keyed API) engine
+
+Implemented the Tavily Search API engine — Tier D, AI-oriented.
+
+- **Done:**
+  - `internal/engine/tavily/tavily.go` — Tavily Search API client
+    - HTTP POST to `https://api.tavily.com/search` with JSON body: `{api_key, query, max_results}`
+    - Parses JSON response `{results:[{url,title,content}], error?}` into `[]engine.Result`
+    - Maps: `title` → title, `url` → URL, `content` → snippet (html→text stripped)
+    - `buildRequestURL`: path `/search`; limit sent in JSON body (capped at 50, floored at 1)
+    - Headers: `Content-Type: application/json`, `Accept: application/json`, `User-Agent: mst/dev`
+    - Retry policy (§11): via shared `internal/engine/retry` package
+    - Implements `RawEngine` (`SearchWithRaw`) for `--raw` support
+  - `internal/engine/tavily/tavily_test.go` — 22 tests:
+    - **Descriptor:** Name/keyed=true/KeyEnv=TAVILY_API_KEY/DefaultWeight=1.2/Enabled=false/Category=general
+    - **Golden-table parse:** Normal (2 results), empty, skip-empty-URL, API-error, html-content stripping
+    - **httptest round-trip:** Verifies headers (Accept, User-Agent, Content-Type), parses fixture JSON into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 429 (exhausted), malformed JSON, no-key
+    - **buildRequestURL:** 5 cases (various limits)
+    - **Retry:** 429 succeeds on retry, 5xx succeeds on retry, exhausted retries, context cancelled during backoff, non-retryable 401, Retry-After honored
+    - **SearchWithRaw:** Returns both results and decoded raw response; API error returns raw=nil
+    - **limitCap:** 6 cases (normal, cap at 50, floor at 1, negative)
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **20 packages, 485 tests green** (was 463, +22: tavily tests)
+  - `/tmp/mst --list-engines` → shows `tavily` with status `disabled, keyed, weight=1.2, category=general`
+- **Weight:** 1.2 (Tier D, AI-oriented — same as arxiv/pubmed per spec §6 config example)
+- **Category:** `general` (Tier D, AI-oriented — composes with RRF like other structured-API engines)
+- **Files:** tavily.go, tavily_test.go, main.go, TASKS.md, PROGRESS.md
+- **Blocked on:** nothing
+- **Next:** Sprint D.1.2 (tavily follow-ups: `include_answer` option, `depth` param) or Stage 2 hardening.
+
+## 2026-07-09 — Sprint B.2.1: table format polish + live tests ✅
+
+Polished the `table` output format and verified all 5 Tier B live integration tests.
+
+- **Done:**
+  - **Table polish:** Added `truncateURL()` — URL truncation that preserves scheme+host
+    (the identifying part) and truncates the path. This prevents URLs from dominating
+    the table line. Added `maxURLWidth` constant (50).
+  - **MarshalTable/MarshalTableUnmerged:** Both now apply `truncateURL()` to URLs.
+  - **Tests:** +6 new tests: truncateURL unit tests (4 cases), MarshalTable URL truncation,
+    MarshalTableUnmerged URL truncation. Total format package: 38 tests green.
+  - **Live tests verified:** All 5 Tier B engines already had `MST_ITEST=1` live tests
+    from prior sprints. Re-verified all green:
+    - arxiv: 5 results, first "Dilated Neighborhood Attention Transformer"
+    - pubmed: 5 results, first "Effectiveness of a 12-Day Residential Wellness Program"
+    - stackexchange: 5 results, first "Max number of goroutines"
+    - hackernews: 5 results, first "The Go Programming Language by Brian W. Kernighan"
+    - grokipedia: 10 results, first "Go! (programming language)"
+  - **DECISIONS entry:** grokipedia stability assessment — kept `enabled: false`
+    (experimental upstream, needs longer-term monitoring before promotion).
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **19 packages, 387 tests green** (was 381, +6: format polish)
+  - Live table output verified: clean column alignment, URL truncation works correctly
+- **Files:** table.go, table_test.go, DECISIONS.md, TASKS.md, PROGRESS.md
+- **Blocked on:** nothing
+- **Next:** Sprint C.1.3 (google multi-page scrape)
+
+## 2026-07-09 — Sprint C.1.2: `bing` keyed API engine ✅
+
+Implemented the Bing Web Search v7 API engine.
+
+- **Done:**
+  - `internal/engine/bing/bing.go` — Bing Web Search v7 API client
+    - HTTP GET to `https://api.bing.microsoft.com/v7.0/search` with params: `q`, `count`
+    - Parses JSON response `{webPages:{value:[{displayName,url,snippet}]}}` into `[]engine.Result`
+    - Maps: `displayName` → title, `url` → URL, `snippet` → snippet
+    - `buildRequestURL`: sets `q`, `count` (capped at 50, floored at 1)
+    - Headers: `Accept: application/json`, `Ocp-Apim-Subscription-Key: <API_KEY>`, `User-Agent: mst/dev`
+    - Retry policy (§11): via shared `internal/engine/retry` package
+    - Implements `RawEngine` (`SearchWithRaw`) for `--raw` support
+  - `internal/engine/bing/bing_test.go` — 20 tests:
+    - **Descriptor:** Name/keyed=true/KeyEnv/BING_API_KEY/DefaultWeight=1.0/Enabled=false/Category=general
+    - **Golden-table parse:** Normal (2 results), empty, nil-webPages, skip-empty-URL, API-error
+    - **httptest round-trip:** Verifies headers (Accept, User-Agent, Ocp-Apim-Subscription-Key), parses fixture JSON into `[]Result`
+    - **Error paths:** Context cancelled, HTTP 429 (exhausted), malformed JSON, no-key
+    - **buildRequestURL:** 5 cases (normal, cap at 50, normal 50, floor at 1, floor at 1)
+    - **Retry:** 429 succeeds on retry, 5xx succeeds on retry, exhausted retries, context cancelled during backoff, non-retryable 401, Retry-After honored
+    - **SearchWithRaw:** Returns both results and decoded raw response; API error returns raw=nil
+  - Wire into `defaultRegistry()` in `cmd/mst/main.go`
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **19 packages, 381 tests green** (was 361, +20: bing tests)
+  - `/tmp/mst --list-engines` → shows `bing` with status `disabled, keyed, weight=1.0, category=general`
+- **Weight:** 1.0 (Tier C, keyed API — same as google's default)
+- **Category:** `general` (general web search)
+- **Files:** bing.go, bing_test.go, main.go, TASKS.md, PROGRESS.md
+- **Blocked on:** nothing
+- **Next:** Sprint B.2.1 (live integration tests for Tier B engines) or Sprint C.1.3
 - **Last:** 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;

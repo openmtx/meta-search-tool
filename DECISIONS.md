@@ -6,6 +6,103 @@ spec changes. `docs/SPEC.md` is the source of truth; this file is the exception
 log. When a decision here is accepted, fold it into the spec and leave the entry
 as a dated record. See `AGENTS.md`.
 
+## 2026-07-09 — default engine setup aligned to SearXNG (§5/§6/§17.3)
+- **Context:** User requested researching SearXNG's default engine state and
+  matching it. Reviewed `ref/searxng/searx/settings.yml` — SearXNG ships
+  `mojeek` and `hackernews` as `disabled: true`. Our tool had them enabled
+  by default (mojeek as a keyless general-web fallback; hackernews for tech
+  news). This is a spec deviation: the SPEC and code previously treated both
+  as default-on.
+- **Decision:** Disabled **mojeek** and **hackernews** by default, matching
+  SearXNG's defaults. The default-on set is now:
+  - Enabled: `wikipedia`, `arxiv`, `pubmed`, `stackexchange`, `brave`
+    (auto-skips if no key), `ddg` (keyless general-web).
+  - Disabled (SearXNG compat): `mojeek`, `hackernews`, `grokipedia`,
+    `google`, `bing`.
+  - Disabled (own default — keyed/paid API, Tier D): `tavily`.
+  Users can enable with `-e mojeek`, `-e hackernews`, or config `enabled: true`.
+- **Rationale:** Matching the reference metasearch implementation's defaults
+  reduces surprise for users familiar with SearXNG. Both engines remain fully
+  functional — only their default-enabled state changed. ddg is the sole
+  keyless general-web engine on by default (verified reliable via the SearXNG-
+  mechanism redesign). Note: `tavily` is not a SearXNG engine; its
+  disabled-by-default status is our own design choice (keyed, paid API, Tier D)
+  and not part of the SearXNG alignment.
+- **Status:** accepted — folded into spec §5 (engine tables, notes, access),
+  §6 (config example), §16 (roadmap), §17.3 (default-on set), §18 (deferred),
+  §19 (profiles), engine descriptors, and their tests.
+
+## 2026-07-09 — tavily answer field: separate envelope field, NOT composed with RRF
+- **Context:** §18 open question: "AI-oriented answer/summary output (§5 Tier D):
+  Tavily's answer mode returns a synthesized summary beyond the URL list — decide
+  whether such an 'answer' composes with RRF at all, or belongs in a separate
+  output field." Sprint D.1.2 added `include_answer` and `search_depth` support.
+- **Decision:** The `answer` field is a **separate top-level field** in the output
+  envelope (`Envelope.Answer`). It does NOT compose with RRF — the summarized
+  answer is not a search result and should not be ranked, scored, or deduplicated.
+  It is surfaced in the `--format json` merged output envelope when: (a) tavily
+  is configured with `include_answer: true` and (b) the API returns a non-empty
+  `answer`. The field is `omitempty` so it's absent when not populated. Under
+  `--raw`, the answer is already part of the native tavily payload. Under
+  `--no-merge`/`jsonl`/`text`/`table`, the answer is not included (the answer
+  concept is tied to the merged JSON view; `--raw` is available for full fidelity).
+- **Rationale:** The answer is a synthesized summary, not a ranked URL result.
+  Mixing it into the RRF pipeline would distort scores and confuse consumers that
+  expect uniform result objects with rank/score/source. A separate field lets
+  downstream harnesses treat it as metadata rather than a search result.
+- **Status:** accepted — folded into spec §5 (Tier D note), §10 (envelope schema),
+  TASKS.md Sprint D.1.2, and implemented in code.
+
+## 2026-07-09 — grokipedia stability assessment
+- **Context:** grokipedia was shipped with `enabled: false` per SearXNG's
+  `inactive` marking (experimental). The live test (`MST_ITEST=1`) returned 10
+  results reliably on the first run, with clean HTML-stripped snippets and
+  correct `/page/<slug>` URLs. However, grokipedia is a newer/less-established
+  service (launched ~2025) compared to arxiv/pubmed/hackernews which have
+  decades of uptime.
+- **Decision:** Keep `enabled: false` for now. grokipedia is functional and the
+  API is clean, but it's still experimental upstream. If live testing over a
+  longer period shows consistent availability, promote to `enabled: true` and
+  update this entry.
+- **Rationale:** Conservative — don't promote an experimental engine until we
+  have confidence in its uptime. The `MST_ITEST=1` gate ensures it's tested
+  regularly.
+- **Status:** accepted — grokipedia stays `enabled: false`.
+
+
+## 2026-07-09 — Google public CSE token path (SearXNG-style, keyless, merged into hybrid engine)
+- **Context:** User asked to add SearXNG's `google_cse` approach (keyless, uses
+  blackle.com's public CSE ID) as a mode in the existing `google` engine rather
+  than a separate engine. Compared two options:
+  - **Option A** (chosen): merge as a third mode in the hybrid `google` engine;
+    precedence: official API → public CSE (SearXNG-style, built-in CX) → HTML
+    scrape. A `google` is a `google`.
+  - **Option B** (rejected): separate `google_cse` engine (matching SearXNG's
+    architecture but diverging from mst's design where a search-domain gets one
+    engine).
+- **Decision:** Added triple-mode dispatch to `google`:
+  1. **Official REST API** when `GOOGLE_API_KEY` + `GOOGLE_CX` both set.
+  2. **Public CSE token** (default, keyless) when a CX is available from env var
+     or the built-in default (`partner-pub-8993703457585266:4862972284`,
+     blackle.com's public CSE, same as SearXNG). Fetches a 1-hour-cached session
+     token from `google.com/cse/cse.js?cx=<CX>`, then queries
+     `cse.google.com/cse/element/v1` with the token.
+  3. **HTML scrape** (fallback) when no CX is available at all.
+  The engine descriptor remains `Keyed: false` (works keyless via public CSE).
+  Default CX is package-var settable for tests via `SetDefaultPublicCX("")`.
+  SearXNG-style `cse_token` caching (1h TTL, `sync.Mutex`-guarded) implemented
+  with `ResetCSETokenCache()` for deterministic tests.
+- **Rationale:** User preference for merged engine ("a google is a google");
+  the public CSE path is strictly better than HTML scraping (structured results,
+  fewer bot blocks, same keyless UX as SearXNG). The blackle.com CSE is a public
+  Programmable Search Engine — no API key needed, and SearXNG has relied on it
+  since 2021. HTML scrape is now a tertiary fallback-of-last-resort.
+- **Status:** accepted — spec §5 (Tier C table, access notes), §6 (config
+  example note), §17.3 (disabled-by-default reasoning updated). Engine code,
+  tests (CSE httptest round-trip, golden-table parse, token cache, error paths,
+  SearchWithRaw), and scrape-mode tests (with `scrapeOnly` helper to clear
+  default CX) all implemented and green.
+
 <!--
 Entry template:
 

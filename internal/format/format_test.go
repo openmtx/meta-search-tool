@@ -21,7 +21,7 @@ func sampleEnvelope() *Envelope {
 	results := []rank.RankedResult{
 		{Rank: 1, Title: "Tokio vs async-std", URL: "https://a.example/1", Source: "example.com", Snippet: "A comparison.", Score: 0.0331, Engines: []string{"brave"}},
 	}
-	return BuildEnvelope("rust async runtime", runs, results, 10, 6109)
+	return BuildEnvelope("rust async runtime", runs, results, 10, 6109, "")
 }
 
 func TestBuildEnvelope(t *testing.T) {
@@ -73,7 +73,7 @@ func TestMarshal_JSON(t *testing.T) {
 // empty engines map as `{}` — never JSON null (§4: exit-1 stdout is a valid
 // `results: []` payload).
 func TestMarshal_JSON_NoResultsIsArray(t *testing.T) {
-	env := BuildEnvelope("q", nil, nil, 10, 5)
+	env := BuildEnvelope("q", nil, nil, 10, 5, "")
 	out, err := Marshal(env, "json")
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestMarshal_Text(t *testing.T) {
 }
 
 func TestMarshal_TextNoSnippet(t *testing.T) {
-	env := BuildEnvelope("q", nil, []rank.RankedResult{{Rank: 2, Title: "T", URL: "https://x/y"}}, 10, 1)
+	env := BuildEnvelope("q", nil, []rank.RankedResult{{Rank: 2, Title: "T", URL: "https://x/y"}}, 10, 1, "")
 	out, err := Marshal(env, "text")
 	if err != nil {
 		t.Fatal(err)
@@ -385,10 +385,24 @@ func TestMarshalUnmerged_Text(t *testing.T) {
 	}
 }
 
-func TestMarshalUnmerged_TableRejected(t *testing.T) {
+func TestMarshalUnmerged_TableWorks(t *testing.T) {
 	env := BuildUnmergedEnvelope("q", sampleRuns(), 10, 7)
-	if _, err := MarshalUnmerged(env, "table"); err == nil {
-		t.Error("table must be rejected (v0.2)")
+	out, err := MarshalUnmerged(env, "table")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	// Must contain header row with ENGINE column.
+	for _, want := range []string{"ENGINE", "TITLE", "URL"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("unmerged table missing header %q:\n%s", want, s)
+		}
+	}
+	// Must contain engine names from sampleRuns.
+	for _, want := range []string{"alpha", "beta"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("unmerged table missing engine %q:\n%s", want, s)
+		}
 	}
 }
 
@@ -448,4 +462,14 @@ func TestMarshalRaw(t *testing.T) {
 		t.Error("--raw output should end with a trailing newline")
 	}
 	_ = got
+}
+
+// === table format (Sprint B.1.6) ===========================================
+// Table renderer tests live in table_test.go.
+
+func sampleResults() []rank.RankedResult {
+	return []rank.RankedResult{
+		{Rank: 1, Title: "Go Concurrency Patterns", URL: "https://go.dev/blog/patterns", Source: "go.dev", Snippet: "A deep dive into goroutines, channels, and contexts.", Score: 0.045, Engines: []string{"brave"}},
+		{Rank: 2, Title: "Understanding Go Routines", URL: "https://example.com/go-routines", Source: "example.com", Snippet: "Routines are lightweight threads managed by the Go runtime.", Score: 0.032, Engines: []string{"wiki"}},
+	}
 }

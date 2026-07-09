@@ -229,7 +229,7 @@ credentials; skipped silently if absent unless `--require`).
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `brave` | ❌ | `BRAVE_API_KEY` | Brave Search API; structured, block-resistant. **Anchor engine.** |
-| `mojeek` | ✅† | none (scrape) | Independent index, scrape-tolerant; paid/beta API exists. Reliable keyless general web. |
+| `mojeek` | ✅† | none (scrape) | Independent index, scrape-tolerant; paid/beta API exists. **Disabled by default** (SearXNG compat; enable with `mojeek.enabled: true` or `-e mojeek`). |
 
 > ⚠️ **Mojeek is HTML-scraped** — more scrape-tolerant than the Tier-C
 > engines, but inherently less reliable than an API. It is one of *two* keyless
@@ -256,10 +256,10 @@ engines in that category, and built-in group aliases for property-based selectio
 
 | Category | Engines |
 |----------|---------|
-| `general` | `brave`, `mojeek`, `ddg` |
+| `general` | `brave`, `ddg` |
 | `reference` | `wikipedia`, `grokipedia` |
 | `academic` | `arxiv`, `pubmed` |
-| `news` | `hackernews` |
+| `news` | `hackernews` ⚠️ (disabled by default) |
 | `q&a` | `stackexchange` |
 
 **Built-in group aliases:**
@@ -268,7 +268,8 @@ engines in that category, and built-in group aliases for property-based selectio
 - `--engine all` — all registered engines
 
 Mixing aliases with engine names works: `--engine academic,mojeek` selects
-academic engines plus mojeek. Duplicates are removed (first occurrence wins).
+academic engines plus mojeek (mojeek is still disabled by default; `-e`
+explicitly enables it). Duplicates are removed (first occurrence wins).
 An unknown name (not an engine name, category, or alias) exits 2.
 
 ### Vertical specialty — domain-specific (deferred engines):
@@ -278,7 +279,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 | `arxiv` | ✅ | none | CS/physics/math papers; free API. |
 | `pubmed` | ✅ | none | Biomedical literature; E-utilities API. |
 | `stackexchange` | ✅ | none (key optional) | Stack Overflow + network; technical Q&A. |
-| `hackernews` | ✅ | none | Tech news/discussion; Algolia API. |
+| `hackernews` | ✅ | none | Tech news/discussion; Algolia API. **Disabled by default** (SearXNG compat; enable with `hackernews.enabled: true` or `-e hackernews`). |
 | `github` | ❌ | `GITHUB_TOKEN` | Code search. **Requires a token** — `/search/code` needs auth (unauthenticated, only `/search/repositories` works at low rates). v1.x; see §18. |
 | `reddit` | ⚠️ | OAuth app creds | Public consensus/discussion; semi-keyed. |
 
@@ -287,7 +288,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `ddg` (DuckDuckGo) | ✅ | none | HTML scrape; **best-effort** (see note). On by default. |
-| `google` | ❌ | `GOOGLE_API_KEY` + `GOOGLE_CX` | Programmable Search Engine (keyed API is fine; *scraping* Google is what gets blocked). |
+| `google` | ✅ | `GOOGLE_API_KEY` (optional) + `GOOGLE_CX` (optional — built-in default CX for keyless public CSE) | Triple-mode hybrid: official REST API → public CSE (SearXNG-style, keyless, built-in CX) → HTML scrape fallback. |
 | `bing` | ❌ | `BING_API_KEY` | Bing Web Search v7 (keyed API). |
 
 ### Tier D — AI-oriented (answer/summary modes; under evaluation)
@@ -311,7 +312,9 @@ An unknown name (not an engine name, category, or alias) exits 2.
 > heavily anti-scraped. DDG was off by default in early v0.1 as "fragile", but
 > the SearXNG-mechanism implementation + UA rotation proved reliable in live
 > testing, so `ddg` is **on by default** as a keyless general-web engine
-> (alongside `mojeek`); disable with `--exclude ddg` or `ddg.enabled: false`.
+> (the only keyless general-web engine on by default; `mojeek` is disabled by
+> default — SearXNG compat); disable ddg with `--exclude ddg` or `ddg.enabled: false`. Enable mojeek
+> with `--engine mojeek` or `mojeek.enabled: true`.
 > HTML scraping carries ToS/legal considerations
 > — users are responsible for compliance in their jurisdiction; `mst` bounds
 > load via the retry policy (§11). Only page 1 is fetched (the `vqd` token
@@ -319,7 +322,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 
 ### Engine access notes (implementation)
 
-- **`mojeek` (HTML scrape, keyless):** `GET https://www.mojeek.com/search?q=<q>&safe=<0|1>`.
+- **`mojeek` (HTML scrape, keyless, disabled by default):** `GET https://www.mojeek.com/search?q=<q>&safe=<0|1>`.
   Paging via `s=<10×(page−1)>` — **omit `s` on page 1** (sending `s=0` triggers a
   rate-limit); max 10 pages (cap fetch at ~100). Locale via an `Accept-Language`
   header. General-result selectors (port to Go + goquery): container
@@ -344,6 +347,25 @@ An unknown name (not an engine name, category, or alias) exits 2.
   `https://grokipedia.com/page/<slug>` (html→text on snippet). No auth — the
   cleanest integration of the new engines. Caveat: upstream SearXNG marks it
   `inactive` (experimental); validate stability before relying on it.
+- **`google` (triple-mode hybrid):** searches via three modes in order of
+  precedence:
+  1. **Official REST API** (`GOOGLE_API_KEY` + `GOOGLE_CX` env vars both set):
+     `GET https://www.googleapis.com/customsearch/v1?key=...&cx=...&q=...&num=...`
+     (max 10 results per request). Requires a paid Google Cloud API key.
+  2. **Public CSE token** (default, keyless): follows SearXNG's `google_cse`
+     engine. Uses a built-in public CSE ID (`partner-pub-8993703457585266:4862972284`,
+     blackle.com's Programmable Search Engine). Two HTTP calls:
+     a. `GET https://www.google.com/cse/cse.js?cx=<CX>` → returns JSONP with
+        `cse_token` (cached for 1 hour, §11 retry policy applies).
+     b. `GET https://cse.google.com/cse/element/v1?rsz=filtered_cse&num=20&hl=en&cselibv=...&cx=...&q=...&safe=medium&cse_tok=...&callback=_`
+        → returns JSONP with `results[]`.
+     Page size is 20 (SearXNG convention); data is capped at the search limit.
+     Results map: `titleNoFormatting` → Title, `unescapedUrl` → URL,
+     `contentNoFormatting` → Snippet.
+  3. **HTML scrape** (fallback when no CX available):
+     `GET https://www.google.com/search?q=...&start=...&filter=0`
+     with browser User-Agent (`Mozilla/5.0 Chrome/125`) and `CONSENT=YES+` cookie.
+     Parses `/url?q=` redirect links from `.g` divs. Detects CAPTCHA/sorry pages.
 - **JSON-API engines** (`wikipedia`, `arxiv`, `pubmed`, `stackexchange`,
   `hackernews`, `grokipedia`) return structured results directly and are
   preferred for reliability. **Scrape engines** (`mojeek`, `ddg`) parse HTML and
@@ -402,9 +424,9 @@ engines:
   #   Tier A ~1.5–2.0, Tier B ~1.0–1.5, Tier C ~0.5. Starting points; tune freely.
   brave:        { weight: 2.0, enabled: true,  api_key_env: BRAVE_API_KEY, timeout: 4s }
   wikipedia:    { weight: 1.5, enabled: true,  timeout: 3s }
-  mojeek:       { weight: 1.3, enabled: true,  timeout: 4s }
+  mojeek:       { weight: 1.3, enabled: false, timeout: 4s }   # disabled by default (SearXNG compat)
   ddg:          { weight: 1.0, enabled: true,  timeout: 3s }   # scrape (SearXNG mechanism); on by default
-  google:       { weight: 1.0, enabled: false, api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }
+  google:       { weight: 1.0, enabled: false, api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }  # cx_env optional (built-in default CX for keyless public CSE)
   bing:         { weight: 1.0, enabled: false, api_key_env: BING_API_KEY }
   tavily:       { weight: 1.2, enabled: false, api_key_env: TAVILY_API_KEY }
 ```
@@ -678,7 +700,7 @@ would need a different merge strategy and is deferred (§18).
   (so a future `vqd` multi-page sequence reuses it across that query's pages),
   and detects the embedded CAPTCHA challenge, reporting it as an engine error
   rather than silently returning zero results. `mojeek` keeps the honest UA for
-  now (it is scrape-tolerant). Making the UA user-configurable
+  now (it is scrape-tolerant, and disabled by default). Making the UA user-configurable
   (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
 - Outbound requests limited to configured engine endpoints; no arbitrary URLs.
 - TLS verification always on; no option to disable.
@@ -732,16 +754,18 @@ meta-search-tool/
 
 ## 16. Roadmap
 
-- **v0.1:** `wikipedia` + `mojeek` + `brave` (auto-skips without a key);
+- **v0.1:** `wikipedia` + `brave` (auto-skips without a key);
+  `mojeek` (enabled by default in v0.1, disabled by default from v0.3 — SearXNG compat);
   `ddg` implemented and **on by default**;
   JSON/JSONL/text output; config + flags; **`--rrf-k`**, `--require`, `--strict`,
   `--raw`, `--no-merge`, **`--offset`**; skill-tier flag classification (§4);
   structured stderr errors (§11); **opinionated default weights by reliability
   tier** (§5/§6).
 - **v0.2:** keyless knowledge engines — `arxiv`, `pubmed`, `stackexchange`,
-  `hackernews`, `grokipedia` (free JSON API; validate stability — upstream
-  `inactive`); `table` format; **engine categories & group aliases**
-  (§17.3) — `Category` on `EngineInfo`, `--engine academic|free|keyed|all`.
+  `hackernews` (disabled by default — SearXNG compat), `grokipedia` (free JSON
+  API; validate stability — upstream `inactive`); `table` format; **engine
+  categories & group aliases** (§17.3) — `Category` on `EngineInfo`,
+  `--engine academic|free|keyed|all`.
 - **v0.3:** `google`, `bing`, `tavily`; skill-affordance candidates —
   `--schema`/`--help-json` (emit the flag set as JSON so a harness or tool
   wrapper can consume it), `--fields` (result projection to trim context),
@@ -761,15 +785,21 @@ meta-search-tool/
 
 1. **Language:** Go.
 2. **Config format:** YAML (`gopkg.in/yaml.v3`).
-3. **Default enabled engines (reliability-tiered):** the default-on set is the
-   *reliable* engines — `wikipedia` and `mojeek`, plus `brave` (auto-skips if
-   no key). `ddg` is **implemented and on by default** (keyless general-web,
-   alongside mojeek; SearXNG-mechanism scrape — disable with `--exclude ddg`).
-   All keyed engines (`google`, `bing`, `tavily`, …) are opt-in until enabled
-   with keys.
-   Default *weights* follow the §5 tiers (high for reliable/structured, low for
-   scraped general), so a fresh install is useful for LLM grounding without
-   per-call tuning.
+3. **Default enabled engines (SearXNG-compatible):** the default-on set follows
+   SearXNG's own defaults:
+   - **Enabled by default:** `wikipedia`, `arxiv`, `pubmed`, `stackexchange`,
+     `brave` (auto-skips if no key), `ddg` (keyless general-web, SearXNG-mechanism
+     scrape).
+   - **Disabled by default:** `mojeek` (SearXNG compat), `hackernews` (SearXNG
+     compat), `grokipedia` (SearXNG — inactive/experimental), `google` (inactive
+     in SearXNG; effectively keyless via public CSE — enable for keyless
+     Google results with the built-in CX), `bing` (disabled in SearXNG), `tavily`
+     (not in SearXNG, opt-in).
+   - All keyed/paid engines (`bing`, `tavily`) are opt-in until enabled with keys.
+     `google` is effectively keyless via the built-in public CX (same SearXNG
+     approach); enable with `--engine google` or `google.enabled: true`.
+   Default *weights* follow the §5 tiers (high for reliable/structured), so a fresh
+   install is useful for LLM grounding without per-call tuning.
 4. **RRF constant `k`:** `60` default, tunable per call via `--rrf-k`.
 5. **Snippets:** keep the single best (highest contributing weighted score);
    concatenation deferred (see §18).
@@ -816,7 +846,7 @@ Tracked explicitly so they don't get lost:
   user-configurable is deferred.
 - **HTTP User-Agent:** structured-API engines fixed to `mst/<version>` (§12);
   scrape engines send a realistic browser UA **rotated from a pool** (§12
-  carve-out — `ddg`; `mojeek` keeps the honest UA for now). Making the UA
+  carve-out — `ddg`; `mojeek` keeps the honest UA for now (disabled by default). Making the UA
   user-configurable (`MST_USER_AGENT` / `http.user_agent`) remains deferred.
 - **Domain boosts:** deferred to post-v1; design how they interact with RRF.
 - **Search profiles (§19):** **term resolved → `--profile`** (shorter, less
@@ -828,8 +858,8 @@ Tracked explicitly so they don't get lost:
   (result projection to trim context). (Engine group aliases `free`/`keyed`/`all`
   implemented in v0.2, Sprint B.3.1.)
 - **Engine access models to verify (§5):** `mojeek` (monitor scrape viability —
-  it is the *only* keyless general-web engine; consider the paid/beta API path if
-  scraping breaks), `reddit` (spec OAuth env vars + endpoints before implementing),
+  disabled by default but still tested live with `MST_ITEST=1`; consider the
+  paid/beta API path if scraping breaks), `reddit` (spec OAuth env vars + endpoints before implementing),
   `grokipedia` (validate stability — upstream SearXNG marks it `inactive`/
   experimental; ship `enabled: false` until confirmed). (`github` is resolved:
   `/search/code` **requires** a token — §5.) Confirm each before committing it to
@@ -848,10 +878,10 @@ for now. Later, `mst` will support **search profiles** (term finalized to
 naturally into verticals (mirroring real-world metasearch tuning), giving
 concrete profiles to ship:
 
-- `general` → `brave`, `mojeek`, (`ddg`)
-- `developer` → `github`, `stackexchange`, `hackernews`
+- `general` → `brave`, (`ddg`)
+- `developer` → `github`, `stackexchange`, `hackernews` (disabled by default)
 - `academic` → `arxiv`, `pubmed`
-- `community` → `reddit`, `hackernews`
+- `community` → `reddit`, `hackernews` (disabled by default)
 
 **Encyclopedic reference** (`wikipedia`, `grokipedia`) is **cross-cutting** —
 most profiles include it as neutral ground truth rather than pinning it to a

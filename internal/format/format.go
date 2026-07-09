@@ -39,6 +39,10 @@ type EngineStat struct {
 
 // Envelope is the §10 `json` output envelope. It carries the query, the whole-run
 // wall-clock latency, the per-engine stats, and the ranked/windowed results.
+//
+// Answer is an optional AI-generated summary from the Tavily engine (§5 Tier D,
+// Sprint D.1.2) when include_answer is enabled. It is NOT composed with RRF and
+// lives as a separate top-level field, populated only when tavily returns it.
 type Envelope struct {
 	Schema  int                   `json:"schema"`
 	Query   string                `json:"query"`
@@ -46,6 +50,7 @@ type Envelope struct {
 	Limit   int                   `json:"limit"`
 	Engines map[string]EngineStat `json:"engines"`
 	Results []rank.RankedResult   `json:"results"`
+	Answer  string                `json:"answer,omitempty"`
 }
 
 // StructuredError is the §11 stderr object emitted on every non-zero exit:
@@ -66,7 +71,10 @@ type ErrorBody struct {
 // count = len(results), took_ms = the call latency, error = normalized message.
 // Empty results are normalized to `[]` (never JSON null) so exit-1 stdout is a
 // valid `results: []` payload per §4.
-func BuildEnvelope(query string, runs []engine.EngineRun, results []rank.RankedResult, limit int, tookMs int64) *Envelope {
+//
+// answer is an optional AI-generated summary from the Tavily engine (§5 Tier D).
+// It is extracted from the raw payload and surfaced as a top-level envelope field.
+func BuildEnvelope(query string, runs []engine.EngineRun, results []rank.RankedResult, limit int, tookMs int64, answer string) *Envelope {
 	if results == nil {
 		results = []rank.RankedResult{}
 	}
@@ -77,6 +85,7 @@ func BuildEnvelope(query string, runs []engine.EngineRun, results []rank.RankedR
 		Limit:   limit,
 		Engines: buildEngineStats(runs),
 		Results: results,
+		Answer:  answer,
 	}
 }
 
@@ -281,6 +290,9 @@ func BuildUnmergedEnvelope(query string, runs []engine.EngineRun, limit int, too
 // envelope; jsonl → one unmerged result per line; text → "ENGINE: title - url"
 // per result (the engine name prefixes each entry and the rank column is
 // dropped, per §10); table → fixed-width columns with engine name prefix.
+// The answer field (Tavily AI-generated summary) is NOT included in --no-merge
+// output since the Answer concept is tied to the merged view; under --no-merge
+// the raw tavily payload is available via --raw.
 func MarshalUnmerged(env *UnmergedEnvelope, format string) ([]byte, error) {
 	switch format {
 	case "json":

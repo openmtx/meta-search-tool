@@ -41,11 +41,13 @@ type Defaults struct {
 
 // EngineConfig holds per-engine configuration from the config file.
 type EngineConfig struct {
-	Weight    float64 `yaml:"weight"`
-	Enabled   *bool   `yaml:"enabled"`
-	APIKeyEnv string  `yaml:"api_key_env"`
-	CXEnv     string  `yaml:"cx_env"`
-	Timeout   string  `yaml:"timeout"`
+	Weight        float64 `yaml:"weight"`
+	Enabled       *bool   `yaml:"enabled"`
+	APIKeyEnv     string  `yaml:"api_key_env"`
+	CXEnv         string  `yaml:"cx_env"`
+	Timeout       string  `yaml:"timeout"`
+	IncludeAnswer *bool   `yaml:"include_answer,omitempty"` // Tavily: request AI-generated answer
+	SearchDepth   string  `yaml:"search_depth,omitempty"`   // Tavily: "basic" or "advanced"
 }
 
 // EngineConfigs maps engine names to their config entries.

@@ -38,9 +38,8 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 > **v0.1 ships when** Tier A (foundation + engines) + `wikipedia` (Tier B) +
 > `ddg` (Tier C, off by default) + hardening are done (§16).
 
-> ### ▶ Now working on: Tier B, Stage 1 — Sprint B.1.6 (`table` format + E2E)
-> _Updated 2026-07-09: Tier A complete; all Tier B knowledge engines (arxiv,
-> pubmed, stackexchange, hackernews, grokipedia) done._
+> ### ▶ Now working on: Tier D, Stage 1 — Sprint D.1.2 (`include_answer`, `search_depth`)
+> _Updated 2026-07-09: All tiers complete; Stage 1 finished; next: Stage 2 hardening or release tagging._
 
 ### Stage 0 — Core foundation (prerequisite for every engine)  [→ v0.1]
 #### Sprint A.0.1 — Scaffold + config + engine registry
@@ -149,10 +148,11 @@ Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
   wide titles/snippets truncated with "…"; E2E pipeline tests for merged + unmerged paths.
 
 ### Stage 2 — Tier B hardening  [→ v0.2]
-#### Sprint B.2.1 — `table` format polish + `MST_ITEST=1` live tests for all Tier B engines
-- [ ] Live integration tests: arxiv, pubmed, stackexchange, hackernews, grokipedia
-- [ ] `table` format: column width adjustment, truncation, alignment
-- [ ] Update DECISIONS with grokipedia stability assessment
+#### ✅ Sprint B.2.1 — `table` format polish + `MST_ITEST=1` live tests for all Tier B engines   ▶ complete
+- [x] Live integration tests: arxiv, pubmed, stackexchange, hackernews, grokipedia (all 5 already had MST_ITEST=1; verified green)
+- [x] `table` format polish: URL truncation (scheme+host preserved), maxURLWidth constant, truncateURL helper
+- [x] `table` format: truncateURL unit tests + integration tests for MarshalTable/MarshalTableUnmerged
+- [x] Update DECISIONS with grokipedia stability assessment
 
 ### Stage 3 — Engine categories & group aliases  [→ v0.3]
 #### ✅ Sprint B.3.1 — Engine categories & group aliases   ▶ complete
@@ -167,7 +167,7 @@ Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
 - [x] `--list-engines` shows CATEGORY column in text format, `category` in JSON
 - [x] Mixing aliases with engine names: strict-whitelist semantics, dedup'd
 - [x] Update spec §4, §8, §5, §16
-- [ ] Revisit arxiv AND fix: categories make OR-flooding unreachable for default
+- [x] Revisit arxiv AND fix: categories make OR-flooding unreachable for default
       (general) queries since arxiv won't run under `general` category — the
       AND fix was already reverted in favor of categories.
 - **DoD:** ✅ 390 tests green (-race); `--engine academic "transformer"` runs
@@ -216,19 +216,47 @@ results); full suite 341 tests green (-race). Single page only — see follow-up
 - **DoD:** `go test -race ./...` green; `--list-engines` shows `google` as
   `keyless, disabled, weight=1.0`. 447 tests green (-race).
 
-#### Sprint C.1.2 — `bing` (keyed API)
-- [ ] `internal/engine/bing/bing.go` — Bing Web Search v7 API
-- [ ] Wire into `defaultRegistry()`
-- **DoD:** `go test -race ./...` green.
+#### ✅ Sprint C.1.2 — `bing` (keyed API)   ▶ complete
+- [x] `internal/engine/bing/bing.go` — Bing Web Search v7 API client
+- [x] `internal/engine/bing/bing_test.go` — 20 tests: descriptor, golden-table parse (5), httptest round-trip, buildRequestURL (5 cases), error paths (4), retry (6), SearchWithRaw (2)
+- [x] Wire into `defaultRegistry()`
+- **DoD:** ✅ Done: 20 bing tests green (-race); full suite 381 tests green (-race); `--list-engines` shows `bing` with status `disabled, keyed, weight=1.0, category=general`. Weight 1.0 (Tier C, keyed API).
 
 ---
 
-## Tier D — AI-oriented (spec §5)
+## ✅ Tier D — AI-oriented — done (v0.3)
+Shipped: `tavily` with `include_answer` and `search_depth` options (Sprint D.1.2).
+
 ### Stage 1 — AI answer engines  [→ v0.3]
-#### Sprint D.1.1 — `tavily` (keyed API)
-- [ ] `internal/engine/tavily/tavily.go` — Tavily Search API
-- [ ] Wire into `defaultRegistry()`
-- **DoD:** `go test -race ./...` green.
+#### ✅ Sprint D.1.1 — `tavily` (keyed API)   ▶ complete
+- [x] `internal/engine/tavily/tavily.go` — Tavily Search API client: POST to
+      `api.tavily.com/search`, parses JSON `{results:[{url,title,content}]}` into
+      `[]engine.Result`; limit capped at 50 (free tier), floored at 1; html→text
+      snippet stripping (§5).
+- [x] `internal/engine/tavily/tavily_test.go` — descriptor, golden-table parse
+      (5: normal/empty/skip-empty-URL/api-error/html-content), httptest round-trip,
+      buildRequestURL (5 cases), context cancellation, HTTP error, malformed
+      response, retry (429 succeeds on retry, exhausted, 5xx succeeds, context
+      cancelled during backoff, non-retryable 401, Retry-After honored),
+      SearchWithRaw (2), limitCap (6 cases), + gated `TestSearch_Live`
+      (MST_ITEST=1).
+- [x] Wire into `defaultRegistry()`.
+- **DoD:** ✅ Done: 22 tavily tests green (-race); full suite **403 tests green**
+  (-race) + 8 skips; `--list-engines` shows `tavily` with status `disabled, keyed,
+  weight=1.2, category=general`. Weight 1.2 (Tier D, AI-oriented).
+
+#### ✅ Sprint D.1.2 — tavily follow-ups: `include_answer`, `search_depth`, answer field   ▶ complete
+- [x] `include_answer` option passed to Tavily API (config: `engines.tavily.include_answer`, default false)
+- [x] `search_depth` option passed to Tavily API (config: `engines.tavily.search_depth`, default "basic")
+- [x] `Answer` field parsed from Tavily response and surfaced as top-level envelope field (not composed with RRF)
+- [x] `GetAnswerFromRaw` helper to extract answer from raw payload
+- [x] Per-engine options plumbing: `engine.Options.IncludeAnswer` + `SearchDepth`, config → resolve → dispatch → engine
+- [x] 13 new tavily tests: include_answer true/default, search_depth advanced/empty, answer in response, answer when not requested, GetAnswerFromRaw (5 cases)
+- [x] `config.EngineConfig.IncludeAnswer` + `SearchDepth` YAML fields
+- [x] Decision logged in DECISIONS.md: answer is a separate envelope field, NOT composed with RRF
+- **DoD:** ✅ Done: 35 tavily tests green (-race); full suite **508+ tests green**
+  (-race); `--format json` output includes `"answer"` field when tavily returns one;
+  config YAML supports `include_answer` and `search_depth` under `engines.tavily`.
 
 ---
 

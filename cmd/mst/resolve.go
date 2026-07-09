@@ -31,6 +31,7 @@ type plan struct {
 	limit      int
 	offset     int
 	rrfK       int
+	engineOpts map[string]engine.Options // per-engine extra options (e.g. tavily include_answer, search_depth)
 }
 
 // usageErr is a usage/config error mapping to exit code 2 (§4).
@@ -121,6 +122,17 @@ func resolvePlan(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) (*p
 		}
 	}
 
+	// Build per-engine extra options from config (e.g. tavily include_answer, search_depth).
+	engineOpts := make(map[string]engine.Options)
+	for name, ec := range cfg.Engines {
+		var opts engine.Options
+		if ec.IncludeAnswer != nil {
+			opts.IncludeAnswer = *ec.IncludeAnswer
+		}
+		opts.SearchDepth = ec.SearchDepth
+		engineOpts[name] = opts
+	}
+
 	// Build the plan from the Ready engines.
 	p := &plan{
 		weights:    make(map[string]float64),
@@ -131,6 +143,7 @@ func resolvePlan(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) (*p
 		rrfK:       flags.RRFK,
 		globalTo:   globalTo,
 		fetchLimit: rank.FetchLimit(flags.Offset, flags.Limit),
+		engineOpts: engineOpts,
 	}
 	for i, s := range states {
 		name := s.info.Name
