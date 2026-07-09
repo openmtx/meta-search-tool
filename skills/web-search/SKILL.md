@@ -1,211 +1,92 @@
 ---
 name: web-search
-description: Search the web with `mst`, a single-binary meta-search CLI that runs one query across many search engines concurrently and returns one merged, re-ranked JSON result set with transparent scores. Use whenever the task needs current web information, facts, documentation lookups, or a list of relevant URLs — especially when ranking quality matters or you want to steer which engines to trust per query.
+description: >-
+  Search the web with `mst`, a single-binary meta-search CLI. Fans out to
+  multiple engines concurrently, merges results with tunable RRF ranking,
+  emits JSON. Use for current web info, facts, docs, or URLs — not for
+  reading page bodies (call a fetch tool on returned URLs).
 license: Apache-2.0
-compatibility: Requires the `mst` binary on PATH (v0.1+). Optional engine API keys (e.g. BRAVE_API_KEY, GOOGLE_API_KEY) enable more engines; keyless engines (Wikipedia, Mojeek) work with zero setup.
+compatibility: Requires `mst` on PATH. Get it via `source <(curl -sL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/setup.sh)` or `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`.
 ---
 
-# Web Search (via `mst`)
-
-`mst` (meta-search tool) queries many engines at once, dedups and re-ranks the
-results with Reciprocal Rank Fusion (RRF), and prints JSON. This skill wraps its
-**tier-1** flag set — the small, stable subset designed for agent use.
-
-**Scope:** `mst` returns **URLs and snippets only.** It does not fetch or read
-page bodies. If you need a page's content, call a separate fetch/readability
-tool on a URL this skill returns.
+# web-search (mst)
 
 ## Setup
 
-### Option A — already installed
-
-Ensure `mst` is on `PATH`:
-
 ```bash
-mst --version
-mst --list-engines
-```
+# Check if already on PATH:
+mst --list-engines   # shows available engines and their status
 
-Each entry reports `status` ∈ {`ready`, `disabled`, `missing-key`}, plus
-`enabled`, `keyed`, `key_present`, and effective `weight`.
-
-### Option B — download the prebuilt binary (recommended for skills)
-
-If `mst` is not on `PATH`, the setup script downloads the right binary for the
-current platform from GitHub Releases and places it in `~/.local/share/mst/bin/`:
-
-```bash
+# Or download the binary for this platform (cached, re-run to update):
 source <(curl -sL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/setup.sh)
+
+# Install from source (needs Go):
+go install github.com/openmtx/meta-search-tool/cmd/mst@latest
 ```
 
-This adds the binary to PATH for the current shell. Subsequent runs use the
-cached binary; re-run the script to update.
+If download/install fails, no fallback — mst is required. Get the binary from
+[GitHub Releases](https://github.com/openmtx/meta-search-tool/releases).
 
-> **If the download fails:** the environment doesn't have `mst`, and no fallback
-> to `curl`-based single-engine search is attempted. Falling back to calling one
-> engine directly (which one? SearXNG public instance? Brave API?) would lose
-> the core value of `mst` — concurrent multi-engine search with RRF fusion, dedup,
-> and transparent scoring. A degraded single-engine fallback would silently
-> produce worse results without the caller knowing. Clear failure is better:
-> the skill reports the error and tells the caller how to install `mst`:
->
-> - **From a release binary (no toolchain needed):** download the archive for
->   your platform from
->   [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases),
->   extract, and place the `mst` binary somewhere on `PATH`.
-> - **From source (needs Go):** `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`
+## Usage
 
-## Search
-
-Results-only output — **prefer this** (no envelope overhead, cheapest on context).
-Emitted only after all engines finish and results are ranked — **not** a
-progressive stream:
-
+**Preferred (results only):**
 ```bash
 mst --format jsonl --limit 10 "<query>"
 ```
 
-Full envelope with per-engine status + scores — use when you want to reason
-about *why* results ranked where they did:
-
+**Full envelope (with per-engine status):**
 ```bash
 mst --format json --limit 10 "<query>"
 ```
 
-### Output shape
-
-`jsonl` — one result object per line, no envelope:
-
-```json
-{"rank":1,"title":"...","url":"https://example.com/a","source":"example.com","snippet":"...","score":0.0331,"engines":["brave","ddg"]}
-```
-
-`json` — envelope with an `engines` status block and a `results[]` array:
-
-```json
-{
-  "schema": 1,
-  "query": "...",
-  "took_ms": 6109,
-  "limit": 10,
-  "engines": { "brave": {"ok":true,"count":10,"took_ms":312,"error":""} },
-  "results": [
-    { "rank":1,"title":"...","url":"https://example.com/a","source":"example.com","snippet":"...","score":0.0331,"engines":["brave","ddg"] }
-  ]
-}
-```
-
-- `score` — higher is better; a weighted RRF score summed across engines.
-- `engines[]` — which engines contributed this URL. More engines = stronger
-  corroboration.
-
-## Steering ranking (the key capability)
-
-Trust an engine more or less for *this* query (repeatable):
-
+**Steer ranking per query:**
 ```bash
-mst --engine brave,ddg --weight brave=2.0 --weight ddg=0.5 "<query>"
+mst --engine brave,wikipedia --weight brave=2.0 "<query>"
 ```
 
-Restrict to a subset, or drop a flaky engine:
-
+**Pagination (best-effort):**
 ```bash
-mst --engine brave,wikipedia "<query>"
-mst --exclude ddg "<query>"
+mst --limit 10 --offset 10 "<query>"
 ```
 
-## Pagination
-
-`--offset` skips merged results. It is **best-effort**: engines drift between
-runs, so "page 2" may overlap page 1 — re-issue the same query to advance:
-
-```bash
-mst --limit 10 --offset 10 "<query>"   # results 11–20
-```
-
-## Reading a query from stdin
-
-Pipe a long query (e.g. assembled from context) via stdin:
-
+**Read query from stdin:**
 ```bash
 printf '%s' "<long query>" | mst --stdin --format jsonl
 ```
 
-## Errors and recovery
+## Profiles — pick the right engines
 
-`mst` exits non-zero with a **JSON object on stderr**. On exits `1`/`3`, stdout
-is still valid JSON; only exit `2` writes nothing to stdout. Parse stderr to
-recover:
-
-| Exit | Meaning | Recover by |
-|------|---------|------------|
-| `0`  | success | — |
-| `1`  | zero results | broaden the query, add engines, or raise `--limit` |
-| `2`  | usage/config error (bad flag, or a `--require`'d key missing) | fix the command; nothing reached stdout |
-| `3`  | an engine ran but failed, or `--strict` was set | results are still on stdout; usually safe to ignore unless you `--require`'d the failing engine |
-
-Example stderr: `{"error":{"code":"engine_failure","message":"ddg: timeout","exit":3}}`
-
-A flaky keyless engine (e.g. the DuckDuckGo HTML scrape) failing is **normal**
-and only shows up in the `engines` block — it does not stop the run. Use
-`--exclude` to silence a chronically broken engine.
-
-## Decision guide
-
-- Just need hits? → `--format jsonl`.
-- Choosing between answers or citing the strongest source? → `--format json`,
-  read `score` + `engines[]`, and `--weight` the engine you trust.
-- Need more results? → `--offset` to page, or raise `--limit`.
-- An engine keeps failing? → `--exclude` it.
-
-## Profiles — pick the right engines for the query
-
-Not every query benefits from all 12 engines. `mst` groups engines by
-category so you can match the engine set to the task:
-
-| Category | `--engine` | Engines | Best for |
-|----------|------------|---------|----------|
-| General web | *(default)* | `brave`, `bing`, `google`, `ddg`, `mojeek`, `tavily` | Broad web search, news, products, everyday queries |
-| Reference | `reference` | `wikipedia`, `grokipedia` | Encyclopedic facts, definitions, overviews |
-| Academic | `academic` | `arxiv`, `pubmed` | Research papers, CS, physics, medicine, biomed |
-| News | `news` | `hackernews` | Tech news, discussion, trending stories |
-| Q&A | `q\&a` or `"q&a"` | `stackexchange` | Programming Q&A, technical how-to, expert answers |
-| Keyless only | `free` | All engines that need no API key | Zero-setup search, no env vars required |
-| All engines | `all` | Everything registered | Maximum coverage, slower |
-
-Examples:
+| Task | `--engine` | Targets |
+|------|------------|---------|
+| Broad web search | *(default)* | brave, bing, google, ddg, mojeek, tavily |
+| Facts / reference | `reference` | wikipedia, grokipedia |
+| Research papers | `academic` | arxiv, pubmed |
+| Tech news | `news` | hackernews |
+| Programming Q&A | `'q&a'` | stackexchange |
+| Zero-setup (keyless) | `free` | all keyless engines |
+| Maximum coverage | `all` | everything |
 
 ```bash
-# Research paper on transformers
 mst --engine academic "vision transformer 2025"
-
-# Tech news
-mst --engine news "rust async runtime"
-
-# Quick fact check from Wikipedia
-mst --engine reference "Reciprocal Rank Fusion"
-
-# Programming question
-mst --engine 'q&a' "goroutine leak detection"
-
-# General search with zero setup (keyless only)
+mst --engine academic,brave "transformer attention"       # compose with general web
 mst --engine free "best espresso grinder"
 ```
 
-Categories compose with individual engines. This uses the academic engines
-plus a general-web engine for context:
+## Errors
 
-```bash
-mst --engine academic,brave "transformer attention mechanisms"
-```
+| Exit | Meaning | Action |
+|------|---------|--------|
+| 0 | success | — |
+| 1 | zero results | broaden query, add engines, raise `--limit` |
+| 2 | bad flags / missing key | fix command |
+| 3 | some engines failed | stdout still has results; `--exclude` the flaky one |
 
-For the best results on a broad query, use the default (all enabled engines)
-or narrow to the category that matches the domain.
+Error details are JSON on stderr. Exit 1/3: stdout is still valid JSON.
 
-## Flags this skill uses (tier-1 only)
+## Flags
 
 `<query>` (positional), `--stdin`, `-e/--engine`, `--exclude`, `-n/--limit`,
-`--offset`, `-f/--format`, `--weight`, `--list-engines`, `--version`. Avoid the
-debug/tuning flags (`--raw`, `--no-merge`, `--rrf-k`, `--require`, `--strict`,
-`--timeout`, `--per-engine-timeout`, `--config`, `--verbose`) unless you are
-diagnosing `mst` itself.
+`--offset`, `-f/--format`, `--weight`, `--list-engines`, `--version`.
+Avoid debug flags (`--raw`, `--no-merge`, `--rrf-k`, `--require`, `--strict`,
+`--timeout`, `--per-engine-timeout`, `--config`, `--verbose`) unless diagnosing
+mst itself.
