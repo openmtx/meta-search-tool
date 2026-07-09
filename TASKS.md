@@ -202,10 +202,15 @@ results); full suite 341 tests green (-race). Single page only — see follow-up
   `--limit 10`); 401 tests green (-race) + 7 skips; `ngine ddg "nvidia news"`
   returns 24 real NVIDIA news results (up from ~10).
 
-#### Sprint C.1.1 — `google` (keyed API)
-- [ ] `internal/engine/google/google.go` — Google Programmable Search Engine API
-- [ ] Wire into `defaultRegistry()`
-- **DoD:** `go test -race ./...` green.
+#### ✅ Sprint C.1.1 — `google` (keyed API)   ▶ complete
+- [x] `internal/engine/google/google.go` — Google Programmable Search Engine API
+- [x] `internal/engine/google/google_test.go` — 20 tests: descriptor, golden-table
+      parse (3), httptest round-trip, buildRequestURL (3 cases), error paths
+      (no-key, context cancel, HTTP 404, API auth error, malformed), retry
+      (429/5xx/exhausted/cancel-backoff/non-retryable), SearchWithRaw.
+- [x] Wire into `defaultRegistry()`
+- **DoD:** `go test -race ./...` green; `--list-engines` shows `google` as
+  `disabled, keyed, weight=1.0`. 421 tests green (-race).
 
 #### Sprint C.1.2 — `bing` (keyed API)
 - [ ] `internal/engine/bing/bing.go` — Bing Web Search v7 API

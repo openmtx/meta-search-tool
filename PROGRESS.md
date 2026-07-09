@@ -5,12 +5,11 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier C → Stage 1 done. Next: Sprint C.1.1 (google keyed API)
-  (C.1.0 ddg vqd multi-page ✅)
-- **Last:** 2026-07-09 — Sprint C.1.0 complete: ddg now fetches multiple pages
-  via vqd token (SearXNG mechanism). Live test returns 30 results (was ~10);
-  `--engine ddg "nvidia news"` returns 24 real results. 401 tests green (-race)
-  + 7 live skips.
+- **Active:** Tier C → Sprint C.1.1 done. Next: Sprint C.1.2 (bing keyed API)
+  (C.1.0 ddg vqd ✅, C.1.1 google ✅)
+- **Last:** 2026-07-09 — Sprint C.1.1 complete: Google Custom Search API engine.
+  Keyed (GOOGLE_API_KEY + GOOGLE_CX), disabled by default, weight 1.0,
+  category general. 421 tests green (-race) + 7 live skips.
 - **Last:** 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
@@ -119,6 +118,23 @@ and wired it into the full pipeline.
 - **Next:** Sprint B.3.1 (engine categories & aliases)
 
 ## Log
+
+## 2026-07-09 — Sprint C.1.1: google (keyed Programmable Search API)
+
+Google Custom Search JSON API engine. Keyed (GOOGLE_API_KEY + GOOGLE_CX),
+disabled by default, category general.
+
+- **Done:**
+  - `internal/engine/google/google.go` — GET to `www.googleapis.com/customsearch/v1`,
+    params: key, cx, q, num (1–10). API error responses surfaced.
+  - `internal/engine/google/google_test.go` — 20 tests (descriptor, golden-table
+    parse, httptest round-trip, buildRequestURL, error paths, retry, SearchWithRaw).
+  - Wired into `defaultRegistry()` in `cmd/mst/main.go`.
+- **Verified:** 421 PASS, 7 SKIP (-race); `--list-engines` shows google as
+  `disabled/keyed/absent/1.0`.
+- **Files:** google.go, google_test.go, main.go, TASKS.md, PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** Sprint C.1.2 — bing keyed API.
 
 ## 2026-07-09 — Sprint C.1.0: ddg vqd multi-page
 
