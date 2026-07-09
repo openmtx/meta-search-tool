@@ -17,15 +17,41 @@ tool on a URL this skill returns.
 
 ## Setup
 
-- Ensure `mst` is installed and on `PATH` — `mst --version` should print a version.
-- API keys are optional. See what is available right now:
+### Option A — already installed
 
-  ```bash
-  mst --list-engines
-  ```
+Ensure `mst` is on `PATH`:
 
-  Each entry reports `status` ∈ {`ready`, `disabled`, `missing-key`}, plus
-  `enabled`, `keyed`, `key_present`, and effective `weight`.
+```bash
+mst --version
+mst --list-engines
+```
+
+Each entry reports `status` ∈ {`ready`, `disabled`, `missing-key`}, plus
+`enabled`, `keyed`, `key_present`, and effective `weight`.
+
+### Option B — download the prebuilt binary (recommended for skills)
+
+If `mst` is not on `PATH`, the setup script downloads the right binary for the
+current platform from GitHub Releases and places it in `~/.local/share/mst/bin/`:
+
+```bash
+source <(curl -sL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/setup.sh)
+```
+
+This adds the binary to PATH for the current shell. Subsequent runs use the
+cached binary; re-run the script to update.
+
+> **If the download fails:** the environment doesn't have `mst`, and no fallback
+> to `curl`-based single-engine search is attempted. Falling back to calling one
+> engine directly (which one? SearXNG public instance? Brave API?) would lose
+> the core value of `mst` — concurrent multi-engine search with RRF fusion, dedup,
+> and transparent scoring. A degraded single-engine fallback would silently
+> produce worse results without the caller knowing. Clear failure is better:
+> the skill reports the error and tells the caller to install `mst` manually:
+>
+> ```bash
+> go install github.com/openmtx/meta-search-tool/cmd/mst@latest
+> ```
 
 ## Search
 
