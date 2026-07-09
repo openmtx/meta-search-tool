@@ -248,7 +248,30 @@ overlap; a deployment often picks one (or weights `wikipedia` higher).
 | `wikipedia` | ✅ | none | OpenSearch API; factual/entity ground truth. |
 | `grokipedia` | ✅ | none | ⚠️ Free JSON API (`/api/full-text-search`); AI-assisted encyclopedia, neutral & factual. Upstream SearXNG flags it experimental (`inactive`). |
 
-**Vertical specialty** — domain-specific:
+### Category Reference — vertical specialty (§17.3):
+
+Each engine carries a `Category` label declared in its `Descriptor()`. The
+`--engine` flag accepts category names (e.g. `--engine academic`) to select all
+engines in that category, and built-in group aliases for property-based selection.
+
+| Category | Engines |
+|----------|---------|
+| `general` | `brave`, `mojeek`, `ddg` |
+| `reference` | `wikipedia`, `grokipedia` |
+| `academic` | `arxiv`, `pubmed` |
+| `news` | `hackernews` |
+| `q&a` | `stackexchange` |
+
+**Built-in group aliases:**
+- `--engine free` — all keyless engines
+- `--engine keyed` — all keyed (requires API key) engines
+- `--engine all` — all registered engines
+
+Mixing aliases with engine names works: `--engine academic,mojeek` selects
+academic engines plus mojeek. Duplicates are removed (first occurrence wins).
+An unknown name (not an engine name, category, or alias) exits 2.
+
+### Vertical specialty — domain-specific (deferred engines):
 
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
@@ -717,12 +740,13 @@ meta-search-tool/
   tier** (§5/§6).
 - **v0.2:** keyless knowledge engines — `arxiv`, `pubmed`, `stackexchange`,
   `hackernews`, `grokipedia` (free JSON API; validate stability — upstream
-  `inactive`); `table` format.
+  `inactive`); `table` format; **engine categories & group aliases**
+  (§17.3) — `Category` on `EngineInfo`, `--engine academic|free|keyed|all`.
 - **v0.3:** `google`, `bing`, `tavily`; skill-affordance candidates —
   `--schema`/`--help-json` (emit the flag set as JSON so a harness or tool
   wrapper can consume it), `--fields` (result projection to trim context),
   `--dry-run` (resolve config/flags/engines and print the plan without
-  searching), and engine group aliases (`--engine free`/`keyed`/`all`).
+  searching).
 - **v1.0:** stable CLI/schema; full engine set; docs; **packaged releases** —
   GitHub Releases with an OS/arch matrix (linux/macOS/Windows × amd64/arm64),
   `SHA256SUMS` for verification, and `go install` available. Code
@@ -801,9 +825,8 @@ Tracked explicitly so they don't get lost:
   engine, and how per-profile weights compose with global weights + RRF.
 - **Skill affordances (deferred to v0.3):** `--schema`/`--help-json` (emit the
   flag set as JSON so a harness or tool wrapper can consume it), `--fields`
-  (result projection to trim context), and engine group aliases
-  (`free`/`keyed`/`all`, so an LLM need not hardcode names that may be
-  disabled).
+  (result projection to trim context). (Engine group aliases `free`/`keyed`/`all`
+  implemented in v0.2, Sprint B.3.1.)
 - **Engine access models to verify (§5):** `mojeek` (monitor scrape viability —
   it is the *only* keyless general-web engine; consider the paid/beta API path if
   scraping breaks), `reddit` (spec OAuth env vars + endpoints before implementing),
