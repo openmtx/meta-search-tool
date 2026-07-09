@@ -43,7 +43,8 @@ type EngineInfo struct {
 	Keyed         bool
 	KeyEnv        string // env var name holding the key; empty if Keyed is false
 	DefaultWeight float64
-	Enabled       bool // default enabled state (false for fragile/opt-in engines)
+	Enabled       bool   // default enabled state (false for fragile/opt-in engines)
+	Category      string // vertical specialty (§17.3): "general","academic","news","reference","q&a"
 }
 
 // EngineRun is assembled by the dispatcher (internal/search), NOT by engines.
@@ -145,6 +146,74 @@ func (r *Registry) Infos() []EngineInfo {
 	out := make([]EngineInfo, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.engines[name].Descriptor())
+	}
+	return out
+}
+
+// ExpandNames expands category names and built-in group aliases in a name list
+// (§4, §17.3). Category names are replaced by all engines registered with that
+// category. Built-in aliases expand to all engines matching the property:
+//
+//	"free"  → all keyless engines
+//	"keyed" → all keyed (requires key) engines
+//	"all"   → all engines
+//
+// Names that are not category or alias names pass through unchanged (they will
+// be validated as engine names upstream). Duplicates are removed (first
+// occurrence wins, preserving order). Category and alias names are reserved
+// and should not be used as engine names.
+func (r *Registry) ExpandNames(names []string) []string {
+	// Build category → engine names map from registered engines.
+	catMap := make(map[string][]string)
+	for _, info := range r.Infos() {
+		if info.Category != "" {
+			catMap[info.Category] = append(catMap[info.Category], info.Name)
+		}
+	}
+
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if seen[n] {
+			continue
+		}
+		switch n {
+		case "all":
+			for _, info := range r.Infos() {
+				if !seen[info.Name] {
+					seen[info.Name] = true
+					out = append(out, info.Name)
+				}
+			}
+		case "free":
+			for _, info := range r.Infos() {
+				if !info.Keyed && !seen[info.Name] {
+					seen[info.Name] = true
+					out = append(out, info.Name)
+				}
+			}
+		case "keyed":
+			for _, info := range r.Infos() {
+				if info.Keyed && !seen[info.Name] {
+					seen[info.Name] = true
+					out = append(out, info.Name)
+				}
+			}
+		default:
+			// Check if it's a category name.
+			if expanded, ok := catMap[n]; ok {
+				for _, en := range expanded {
+					if !seen[en] {
+						seen[en] = true
+						out = append(out, en)
+					}
+				}
+			} else {
+				// Pass through unchanged (engine name; validated upstream).
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
 	}
 	return out
 }

@@ -97,9 +97,9 @@ func buildEngineStats(runs []engine.EngineRun) map[string]EngineStat {
 
 // Marshal renders the envelope in the requested format (§10). json → the full
 // envelope (compact); jsonl → one result object per line, no envelope; text →
-// "rank. title - url\n    snippet" per result. All formats end with a trailing
-// newline. table/raw/--no-merge are handled (or rejected) upstream; an unknown
-// format here is an error.
+// "rank. title - url\n    snippet" per result; table → fixed-width columns for
+// terminal display. All formats end with a trailing newline. An unknown format
+// here is an error.
 func Marshal(env *Envelope, format string) ([]byte, error) {
 	switch format {
 	case "json":
@@ -120,6 +120,8 @@ func Marshal(env *Envelope, format string) ([]byte, error) {
 		return buf.Bytes(), nil
 	case "text":
 		return marshalText(env.Results), nil
+	case "table":
+		return MarshalTable(env.Results), nil
 	default:
 		return nil, fmt.Errorf("unsupported format %q", format)
 	}
@@ -155,6 +157,7 @@ type ListEngine struct {
 	Keyed      bool    `json:"keyed"`
 	KeyPresent *bool   `json:"key_present"` // nil (→ null) for keyless engines
 	Weight     float64 `json:"weight"`
+	Category   string  `json:"category"`
 	Status     string  `json:"status"`
 }
 
@@ -199,7 +202,7 @@ func marshalListText(engines []ListEngine) []byte {
 	}
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tENABLED\tKEYED\tKEY\tWEIGHT\tSTATUS")
+	fmt.Fprintln(tw, "NAME\tCATEGORY\tENABLED\tKEYED\tKEY\tWEIGHT\tSTATUS")
 	for _, e := range engines {
 		key := "keyless"
 		if e.Keyed {
@@ -209,7 +212,7 @@ func marshalListText(engines []ListEngine) []byte {
 				key = "absent"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%v\t%v\t%s\t%g\t%s\n", e.Name, e.Enabled, e.Keyed, key, e.Weight, e.Status)
+		fmt.Fprintf(tw, "%s\t%s\t%v\t%v\t%s\t%g\t%s\n", e.Name, e.Category, e.Enabled, e.Keyed, key, e.Weight, e.Status)
 	}
 	tw.Flush()
 	return buf.Bytes()
@@ -277,7 +280,7 @@ func BuildUnmergedEnvelope(query string, runs []engine.EngineRun, limit int, too
 // MarshalUnmerged renders the --no-merge envelope (§10): json → the full
 // envelope; jsonl → one unmerged result per line; text → "ENGINE: title - url"
 // per result (the engine name prefixes each entry and the rank column is
-// dropped, per §10). table is v0.2 (rejected as an error).
+// dropped, per §10); table → fixed-width columns with engine name prefix.
 func MarshalUnmerged(env *UnmergedEnvelope, format string) ([]byte, error) {
 	switch format {
 	case "json":
@@ -298,6 +301,8 @@ func MarshalUnmerged(env *UnmergedEnvelope, format string) ([]byte, error) {
 		return buf.Bytes(), nil
 	case "text":
 		return marshalUnmergedText(env.Results), nil
+	case "table":
+		return MarshalTableUnmerged(env.Results), nil
 	default:
 		return nil, fmt.Errorf("unsupported format %q for --no-merge", format)
 	}

@@ -56,6 +56,7 @@ func (*grokipedia) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.0,   // Tier B knowledge source
 		Enabled:       false, // SearXNG marks it experimental (inactive)
+		Category:      "reference",
 	}
 }
 

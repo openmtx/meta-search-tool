@@ -5,12 +5,14 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier B, Stage 1 → Sprint B.1.6 (table format + E2E integration tests) — next
-  (Sprint B.3.1 — engine categories & aliases — added after Stage 2 hardening)
-- **Last:** 2026-07-09 — arxiv reverted to standard `all:<q>` (matches SearXNG);
-  Sprint B.3.1 (engine categories) added to TASKS.md as the architectural fix
-  for arxiv-on-by-default noise. Live test: `--engine arxiv` returns 30 OR'd
-  results. 361 tests green (-race) + 6 live skips (arxiv live test retained).
+- **Active:** Tier B → Stage 3 done. Next: Tier C (scraped general web)
+  (B.1.6 ✅, B.3.1 ✅; B.2.1 table polish deferred — all live tests already exist)
+- **Last:** 2026-07-09 — Sprint B.3.1 complete: `Category` on `EngineInfo`;
+  `Registry.ExpandNames`; 9 engines categorized; `--engine academic|free|keyed|
+  all` group aliases; `--list-engines` shows category column. 390 tests green
+  (-race) + 7 live skips. arxiv scoped to `--engine academic`; general-web
+  default without `-e` won't run arxiv.
+- **Last:** 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
   default set now has 2 keyless general-web engines. 361 tests green (-race);
@@ -82,7 +84,74 @@ The fifth Tier B knowledge engine: Grokipedia's free full-text search JSON API.
 - **Blocked on:** nothing
 - **Next:** Sprint B.1.6 — `table` format + E2E integration tests
 
+## 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
+
+Implemented the `table` output format per spec §10 ("fixed-width columns for terminal use")
+and wired it into the full pipeline.
+
+- **Done:**
+  - `internal/format/table.go` — fixed-width table renderer using `text/tabwriter`
+    - `MarshalTable(results)` — RANK/TITLE/URL/SNIPPET columns, truncation with "…"
+    - `MarshalTableUnmerged(results)` — ENGINE/TITLE/URL/SNIPPET columns for --no-merge
+    - `truncate(s, maxRune)` — rune-aware truncation (handles multi-byte Unicode)
+    - maxTitleWidth=40, maxSnippetWidth=80, minColumnWidth=4
+  - `internal/format/table_test.go` — 15 tests:
+    - **MarshalTable:** Basic, Empty, WideTitle (truncation), WideSnippet (truncation),
+      NoSnippet, MultipleResults, JSONL integration
+    - **MarshalTableUnmerged:** Basic, Empty, NoSnippet
+    - **Truncate unit tests:** Exact fit, needs truncation, Unicode/emoji, empty string
+    - **Live test (§14):** `TestMarshalTable_Live` (MST_ITEST=1, wikipedia fixture)
+  - `internal/format/format.go` — wired `table` into `Marshal()` and `MarshalUnmerged()`
+  - `cmd/mst/main.go` — `validateFormat` now accepts `table`; removed exit-2 guard
+  - `internal/engine/mojeek/mojeek.go` — added `ScrapeBase()` getter for test restore
+  - `cmd/mst/main_test.go` — E2E tests:
+    - `TestRun_Format_Table_E2E` — full pipeline with mojeek httptest fixture → table output
+    - `TestRun_Format_Table_Unmerged` — --no-merge + table pipeline
+    - `TestMarshalUnmerged_TableWorks` — unmerged table format test
+    - Updated `TestRun_TableDeferred` to verify table works (not deferred)
+- **Verified:**
+  - `go build ./...` — clean
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go test -race -count=1 ./...` → **17 packages, 391 tests green** (was 378, +13)
+- **Files:** table.go, table_test.go, format.go, main.go, moekeek.go, format_test.go,
+  main_test.go, TASKS.md, PROGRESS.md
+- **Blocked on:** nothing
+- **Next:** Sprint B.3.1 (engine categories & aliases)
+
 ## Log
+
+## 2026-07-09 — Sprint B.3.1: engine categories & group aliases
+
+Implemented vertical specialty categories and built-in group aliases (§17.3).
+
+- **Done:**
+  - `internal/engine/engine.go`: Added `Category string` to `EngineInfo`;
+    added `ExpandNames` to `Registry` — expands category names ("academic" →
+    arxiv, pubmed) and built-in aliases ("free"/"keyed"/"all") to their
+    constituent engine names.
+  - All 9 engines updated with categories:
+    `general` → brave, mojeek, ddg; `reference` → wikipedia, grokipedia;
+    `academic` → arxiv, pubmed; `news` → hackernews; `q&a` → stackexchange.
+  - `internal/format/format.go`: `ListEngine` gains `Category` field;
+    text format shows CATEGORY column in `--list-engines`.
+  - `cmd/mst/resolve.go`: `resolvePlan` and `computeListEntries` now expand
+    category/group aliases before validation.
+  - `cmd/mst/main_test.go`: `catReg` helper; 4 new E2E tests
+    (TestRun_EngineCategory, TestRun_EngineAlias_Free/Keyed/All); text test
+    checks CATEGORY column.
+  - `internal/engine/engine_test.go`: 12 ExpandNames subtests (category,
+    aliases, dedup, mixed, unknown passthrough).
+- **Verified:** `gofmt -l .` empty; `go build/vet` clean;
+  `go test -race -count=1 ./...` → **390 PASS, 7 SKIP** (+29 net from 361);
+  `--engine academic "transformer"` runs only arxiv+pubmed;
+  `--engine free "q"` selects keyless; `--engine all` selects all;
+  `--list-engines` shows category column; unknown category → exit 2.
+- **Files:** engine.go, engine_test.go, format.go, resolve.go, main_test.go,
+  + 9 engine Descriptor() updates (brave/mojeek/ddg/wikipedia/grokipedia/
+  arxiv/pubmed/hackernews/stackexchange).
+- **Blocked on:** nothing
+- **Next:** Tier C (scraped general web) — C.1.0 (ddg vqd multi-page).
 
 ## 2026-07-09 — arxiv reverted to `all:<q>` (matches SearXNG) + Sprint B.3.1 added
 

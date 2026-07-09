@@ -56,6 +56,7 @@ func (*stackexchange) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.0,
 		Enabled:       true,
+		Category:      "q&a",
 	}
 }
 

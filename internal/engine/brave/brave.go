@@ -52,6 +52,7 @@ func (*brave) Descriptor() engine.EngineInfo {
 		KeyEnv:        "BRAVE_API_KEY",
 		DefaultWeight: 2.0,
 		Enabled:       true,
+		Category:      "general",
 	}
 }
 

@@ -127,6 +127,7 @@ func (*ddg) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.0,
 		Enabled:       true, // on by default (keyless general-web)
+		Category:      "general",
 	}
 }
 

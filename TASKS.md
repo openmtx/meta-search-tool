@@ -138,14 +138,15 @@ Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
   bug (dropped `/api` segment, masked by its own tests) + missing html→text —
   see DECISIONS 2026-07-09.
 
-#### Sprint B.1.6 — `table` format (§10) + E2E integration tests
-- [ ] `internal/format/table.go` — fixed-width column rendering for terminal use
-- [ ] `internal/format/format_test.go` — table rendering tests (wide/narrow titles,
-  truncated URLs, snippet wrapping)
-- [ ] `MST_ITEST=1` live integration test gate (§14) for keyless engines
-- [ ] Wire `table` into `validateFormat` (remove exit-2 guard)
-- **DoD:** `go test -race ./...` green; `--format table` renders results in a
-  terminal-friendly table.
+#### Sprint B.1.6 — `table` format (§10) + E2E integration tests   ▶ complete
+- [x] `internal/format/table.go` — fixed-width column rendering for terminal use
+- [x] `internal/format/format_test.go` + `table_test.go` — table rendering tests (wide/narrow titles,
+  truncated URLs, snippet wrapping, unicode)
+- [x] `MST_ITEST=1` live integration test gate (§14) for keyless engines
+- [x] Wire `table` into `validateFormat` + `Marshal`/`MarshalUnmerged` (remove exit-2 guard)
+- **DoD:** ✅ Done: `go test -race ./...` → 391 tests green; `--format table` renders results in a
+  terminal-friendly table with RANK/TITLE/URL/SNIPPET columns; --no-merge table with ENGINE column;
+  wide titles/snippets truncated with "…"; E2E pipeline tests for merged + unmerged paths.
 
 ### Stage 2 — Tier B hardening  [→ v0.2]
 #### Sprint B.2.1 — `table` format polish + `MST_ITEST=1` live tests for all Tier B engines
@@ -154,29 +155,25 @@ Shipped: core foundation + `brave` + `mojeek`; plus `wikipedia` (Tier B) and
 - [ ] Update DECISIONS with grokipedia stability assessment
 
 ### Stage 3 — Engine categories & group aliases  [→ v0.3]
-#### Sprint B.3.1 — Engine categories & group aliases
-- [ ] Add `Category` field to `EngineInfo` in `internal/engine/engine.go`
-- [ ] Assign categories to every engine in `defaultRegistry()`:
-      `general` → `mojeek`, `ddg`, `brave`;
-      `reference` → `wikipedia`, `grokipedia`;
-      `academic` → `arxiv`, `pubmed`;
-      `news` → `hackernews`;
-      `q&a` → `stackexchange`
-- [ ] Support `--engine <category>` — selects all engines in that category
-- [ ] Support built-in property aliases: `--engine free` (keyless),
-      `--engine keyed` (needs a key), `--engine all`
-- [ ] Update `--list-engines` to show each engine's category
-- [ ] Mixing aliases with engine names in `--engine`: keep strict-whitelist
-      semantics (resolved set = union of all names across aliases)
-- [ ] Update spec §4 (`--engine` alias docs), §8 (`EngineInfo.Category`),
-      §5 (engine tables add a `Category` column), §16 (roadmap → v0.3)
-- [ ] Revisit arxiv AND fix: keep as query-quality improvement for academic
-      queries; categories make OR-flooding unreachable for default (general)
-      queries since arxiv won't run under `general` category
-- **DoD:** `go test -race ./...` green; `--engine academic "transformer"` runs
-  only academic engines; `--engine free "query"` selects all keyless engines;
-  `--list-engines` shows categories; category flag without a matching engine
-  exits 2 (like unknown engine names today).
+#### ✅ Sprint B.3.1 — Engine categories & group aliases   ▶ complete
+- [x] Add `Category` field to `EngineInfo` in `internal/engine/engine.go`
+- [x] Add `Registry.ExpandNames` for category/alias resolution
+- [x] Assign categories to every engine (9 engines: brave/mojeek/ddg → general,
+      wikipedia/grokipedia → reference, arxiv/pubmed → academic,
+      hackernews → news, stackexchange → q&a)
+- [x] `--engine <category>` expands to all engines with that category
+- [x] Built-in aliases: `--engine free` (keyless), `--engine keyed` (keyed),
+      `--engine all` (all engines)
+- [x] `--list-engines` shows CATEGORY column in text format, `category` in JSON
+- [x] Mixing aliases with engine names: strict-whitelist semantics, dedup'd
+- [ ] Update spec §4, §8, §5, §16
+- [ ] Revisit arxiv AND fix: categories make OR-flooding unreachable for default
+      (general) queries since arxiv won't run under `general` category — the
+      AND fix was already reverted in favor of categories.
+- **DoD:** ✅ 390 tests green (-race); `--engine academic "transformer"` runs
+  only arxiv/pubmed; `--engine free` selects all keyless; `--engine all` selects
+  all (missing-key still auto-skip); `--list-engines` shows categories;
+  unknown category names exit 2 (rejected as unknown engine names).
 
 ---
 

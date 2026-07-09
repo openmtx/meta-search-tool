@@ -14,6 +14,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
 	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
@@ -21,21 +22,22 @@ import (
 
 // fakeEngine is a configurable engine for end-to-end run() tests.
 type fakeEngine struct {
-	name    string
-	weight  float64
-	keyed   bool
-	keyEnv  string
-	enabled bool
-	results []engine.Result
-	err     error
-	delay   time.Duration
+	name     string
+	weight   float64
+	keyed    bool
+	keyEnv   string
+	enabled  bool
+	category string
+	results  []engine.Result
+	err      error
+	delay    time.Duration
 }
 
 func (f *fakeEngine) Name() string { return f.name }
 func (f *fakeEngine) Descriptor() engine.EngineInfo {
 	return engine.EngineInfo{
 		Name: f.name, Keyed: f.keyed, KeyEnv: f.keyEnv,
-		DefaultWeight: f.weight, Enabled: f.enabled,
+		DefaultWeight: f.weight, Enabled: f.enabled, Category: f.category,
 	}
 }
 func (f *fakeEngine) Search(ctx context.Context, q string, opts engine.Options) ([]engine.Result, error) {
@@ -383,17 +385,14 @@ func TestRun_VersionAndHelp(t *testing.T) {
 
 func TestRun_TableDeferred(t *testing.T) {
 	reg := newReg(eng("a", r("t", "https://x/1")))
-	// -f table is the only still-deferred format → exit 2 "not yet implemented".
-	// (--raw and --no-merge are now implemented; see their dedicated tests.)
+	// -f table is now implemented (B.1.6); this test just verifies it doesn't
+	// error.
 	code, out, errs := runWith(t, []string{"-f", "table", "q"}, reg, "")
-	if code != 2 {
-		t.Fatalf("exit=%d, want 2", code)
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errs)
 	}
-	if out != "" {
-		t.Errorf("stdout must be empty on exit 2, got %q", out)
-	}
-	if !strings.Contains(errs, "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' message, got %s", errs)
+	if !strings.Contains(out, "RANK") || !strings.Contains(out, "TITLE") {
+		t.Errorf("table output missing headers:\n%s", out)
 	}
 }
 
@@ -701,28 +700,116 @@ func TestRun_ListEngines_JSONL(t *testing.T) {
 	}
 }
 
+// catReg returns a registry with engines across multiple categories for testing
+// --engine category/alias selection. Unlike listReg, these engines have no
+// special wait/error behavior — they return empty results quickly.
+func catReg() *engine.Registry {
+	return newReg(
+		&fakeEngine{name: "e1", category: "academic"},
+		&fakeEngine{name: "e2", category: "academic"},
+		&fakeEngine{name: "e3", category: "news"},
+		&fakeEngine{name: "e4", keyed: true, keyEnv: "K", category: "general"},
+		&fakeEngine{name: "e5", category: "general"},
+	)
+}
+
+func TestRun_EngineCategory(t *testing.T) {
+	// --engine academic should select only academic engines (e1, e2).
+	code, out, errs := runWith(t, []string{"--engine", "academic", "q"}, catReg(), "")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (no results, but no usage error); stderr=%s", code, errs)
+	}
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not JSON envelope: %v\n%s", err, out)
+	}
+	if len(env.Engines) != 2 {
+		t.Fatalf("got %d engines, want 2 (e1, e2); engines=%v", len(env.Engines), env.Engines)
+	}
+	for _, name := range []string{"e1", "e2"} {
+		if _, ok := env.Engines[name]; !ok {
+			t.Errorf("missing engine %q in engines block", name)
+		}
+	}
+}
+
+func TestRun_EngineAlias_Free(t *testing.T) {
+	// --engine free selects all keyless engines (e1, e2, e3, e5).
+	code, out, errs := runWith(t, []string{"--engine", "free", "q"}, catReg(), "")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%s", code, errs)
+	}
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, out)
+	}
+	if len(env.Engines) != 4 {
+		t.Fatalf("got %d keyless engines, want 4 (e1,e2,e3,e5); engines=%v", len(env.Engines), env.Engines)
+	}
+	// e4 is keyed (missing key) — should NOT be selected.
+	if _, ok := env.Engines["e4"]; ok {
+		t.Errorf("keyed engine e4 should not be selected by --engine free")
+	}
+}
+
+func TestRun_EngineAlias_Keyed(t *testing.T) {
+	t.Setenv("K", "test-key")
+	code, out, errs := runWith(t, []string{"--engine", "keyed", "q"}, catReg(), "")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%s", code, errs)
+	}
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, out)
+	}
+	if len(env.Engines) != 1 {
+		t.Fatalf("got %d keyed engines, want 1 (e4); engines=%v", len(env.Engines), env.Engines)
+	}
+	if _, ok := env.Engines["e4"]; !ok {
+		t.Errorf("missing keyed engine e4")
+	}
+}
+
+func TestRun_EngineAlias_All(t *testing.T) {
+	t.Setenv("K", "test-key") // e4 needs its key to become Ready
+	code, out, errs := runWith(t, []string{"--engine", "all", "q"}, catReg(), "")
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%s", code, errs)
+	}
+	var env format.Envelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, out)
+	}
+	if len(env.Engines) != 5 {
+		t.Fatalf("got %d engines, want 5 (all); engines=%v", len(env.Engines), env.Engines)
+	}
+}
+
 func TestRun_ListEngines_Text(t *testing.T) {
 	code, out, _ := runWith(t, []string{"--list-engines", "-f", "text"}, listReg(), "")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	for _, want := range []string{"NAME", "brave", "missing-key", "mojeek", "ready", "grokipedia", "disabled", "keyless"} {
+	for _, want := range []string{"NAME", "CATEGORY", "brave", "missing-key", "mojeek", "ready", "grokipedia", "disabled", "keyless"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text list missing %q in:\n%s", want, out)
 		}
 	}
 }
 
+// TestRun_ListEngines_TableDeferred: --list-engines with -f table is still
+// rejected (v0.2) — only the results format supports table.
 func TestRun_ListEngines_TableDeferred(t *testing.T) {
 	code, out, errs := runWith(t, []string{"--list-engines", "-f", "table"}, listReg(), "")
 	if code != 2 {
-		t.Fatalf("exit = %d, want 2 (table is v0.2)", code)
+		t.Fatalf("exit = %d, want 2 (list-engines table is v0.2)", code)
 	}
 	if out != "" {
 		t.Errorf("stdout must be empty on exit 2, got %q", out)
 	}
-	if !strings.Contains(errs, "table") || !strings.Contains(errs, "v0.2") {
-		t.Errorf("expected table/v0.2 message, got %s", errs)
+	// The error should mention table being unsupported.
+	if !strings.Contains(errs, "table") {
+		t.Errorf("expected table in error message, got %s", errs)
 	}
 }
 
@@ -942,6 +1029,82 @@ func TestRun_DDG_OnByDefault(t *testing.T) {
 	}
 	if len(env.Results) != 1 || env.Results[0].Title != "DDG Default" {
 		t.Errorf("results = %+v, want 1 result from ddg by default", env.Results)
+	}
+}
+
+// === --format table (B.1.6) ================================================
+
+// TestRun_Format_Table_E2E verifies the full pipeline with --format table:
+// dispatch → rank → window → marshal table.
+func TestRun_Format_Table_E2E(t *testing.T) {
+	fixture := `<html><body><ul class="results-standard">` +
+		`<li><a class="ob" href="https://mojeek.example/1">Mojeek Result 1</a><h2>First result</h2><p class="s">A test snippet one.</p></li>` +
+		`<li><a class="ob" href="https://mojeek.example/2">Mojeek Result 2</a><h2>Second result</h2><p class="s">A test snippet two.</p></li>` +
+		`</ul></body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(fixture))
+	}))
+	defer ts.Close()
+
+	origBase := mojeek.ScrapeBase()
+	mojeek.SetScrapeBase(ts.URL)
+	defer mojeek.SetScrapeBase(origBase)
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(mojeek.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errs := runWith(t, []string{"-e", "mojeek", "-f", "table", "test query"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+	// stdout must be the table format.
+	if !strings.Contains(out, "RANK") || !strings.Contains(out, "TITLE") {
+		t.Errorf("table output missing headers:\n%s", out)
+	}
+	if !strings.Contains(out, "First result") {
+		t.Errorf("table output missing result title:\n%s", out)
+	}
+	if !strings.Contains(out, "Second result") {
+		t.Errorf("table output missing second result:\n%s", out)
+	}
+	// stderr must be empty (exit 0).
+	if strings.TrimSpace(errs) != "" {
+		t.Errorf("expected empty stderr on exit 0, got: %s", errs)
+	}
+}
+
+// TestRun_Format_Table_Unmerged verifies --no-merge --format table.
+func TestRun_Format_Table_Unmerged(t *testing.T) {
+	fixture := `<html><body><ul class="results-standard">` +
+		`<li><a class="ob" href="https://mojeek.example/1">M1</a><h2>Unmerged Result</h2><p class="s">From mojeek.</p></li>` +
+		`</ul></body></html>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(fixture))
+	}))
+	defer ts.Close()
+
+	origBase := mojeek.ScrapeBase()
+	mojeek.SetScrapeBase(ts.URL)
+	defer mojeek.SetScrapeBase(origBase)
+
+	reg := engine.NewRegistry()
+	if err := reg.Register(mojeek.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errs := runWith(t, []string{"-e", "mojeek", "--no-merge", "-f", "table", "q"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+	// Unmerged table must have ENGINE column header.
+	if !strings.Contains(out, "ENGINE") {
+		t.Errorf("unmerged table missing ENGINE header:\n%s", out)
+	}
+	// Must contain the engine name.
+	if !strings.Contains(out, "mojeek") {
+		t.Errorf("unmerged table missing engine name:\n%s", out)
 	}
 }
 

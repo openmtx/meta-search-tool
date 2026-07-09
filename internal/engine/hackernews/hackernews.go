@@ -55,6 +55,7 @@ func (*hackernews) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 0.8,
 		Enabled:       true,
+		Category:      "news",
 	}
 }
 

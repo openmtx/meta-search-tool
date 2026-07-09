@@ -46,6 +46,12 @@ func usageErrorf(format string, a ...any) error {
 // the §4 engine-selection / §6 precedence rules and validating engine selection.
 // Every returned error is a usage/config error → exit 2.
 func resolvePlan(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) (*plan, error) {
+	// Expand category/group aliases in --engine list (§17.3, Sprint B.3.1).
+	// This must happen before the unknown-name check below so category names
+	// (e.g. "academic") are resolved to their constituent engines before
+	// validation.
+	flags.Engines = reg.ExpandNames(flags.Engines)
+
 	names := reg.Names()
 	nameSet := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -258,6 +264,10 @@ func computeStates(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) [
 // Precedence is identical to a normal run (§6) because it reuses computeStates,
 // so --weight/--engine/--exclude + config + env are all reflected.
 func computeListEntries(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) []format.ListEngine {
+	// Expand category/group aliases so --list-engines with --engine academic
+	// shows only academic engines (arxiv, pubmed).
+	flags.Engines = reg.ExpandNames(flags.Engines)
+
 	states := computeStates(flags, cfg, reg)
 	out := make([]format.ListEngine, 0, len(states))
 	for _, s := range states {
@@ -268,6 +278,7 @@ func computeListEntries(flags *cli.Flags, cfg *config.Config, reg *engine.Regist
 		}
 		out = append(out, format.ListEngine{
 			Name:       s.info.Name,
+			Category:   s.info.Category,
 			Enabled:    s.enabled,
 			Keyed:      s.keyed,
 			KeyPresent: keyPresent,
