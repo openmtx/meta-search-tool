@@ -20,6 +20,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/arxiv"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/grokipedia"
 	"github.com/openmtx/meta-search-tool/internal/engine/hackernews"
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
 	"github.com/openmtx/meta-search-tool/internal/engine/pubmed"
@@ -53,6 +54,9 @@ func defaultRegistry() *engine.Registry {
 	}
 	if err := reg.Register(hackernews.New()); err != nil {
 		panic("hackernews: " + err.Error())
+	}
+	if err := reg.Register(grokipedia.New()); err != nil {
+		panic("grokipedia: " + err.Error())
 	}
 	if err := reg.Register(brave.New()); err != nil {
 		panic("brave: " + err.Error())
