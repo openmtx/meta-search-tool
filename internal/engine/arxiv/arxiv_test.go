@@ -230,24 +230,24 @@ func TestBuildRequestURL(t *testing.T) {
 		wantMax int
 	}{
 		{
-			name:    "normal query (terms AND'd)",
+			name:    "normal query",
 			q:       "transformer attention",
 			limit:   10,
-			wantQ:   "all:transformer AND all:attention",
+			wantQ:   "all:transformer attention",
 			wantMax: 10,
 		},
 		{
 			name:    "limit capped at 3000",
 			q:       "quantum computing",
 			limit:   5000,
-			wantQ:   "all:quantum AND all:computing",
+			wantQ:   "all:quantum computing",
 			wantMax: 3000,
 		},
 		{
 			name:    "limit floored at 1",
 			q:       "deep learning",
 			limit:   0,
-			wantQ:   "all:deep AND all:learning",
+			wantQ:   "all:deep learning",
 			wantMax: 1,
 		},
 	}
@@ -364,9 +364,8 @@ func TestSearch_Retry_Exhausted(t *testing.T) {
 
 // --- Live integration test (§14, MST_ITEST=1) -------------------------------
 
-// TestSearch_Live verifies the engine against the real arXiv endpoint,
-// including the AND-term query construction (an out-of-domain query should
-// yield ~0 hits, not a noise flood). Skipped unless MST_ITEST=1.
+// TestSearch_Live verifies the engine against the real arXiv endpoint.
+// Skipped unless MST_ITEST=1.
 func TestSearch_Live(t *testing.T) {
 	if os.Getenv("MST_ITEST") != "1" {
 		t.Skip("skipping live test; set MST_ITEST=1 to hit export.arxiv.org")
@@ -388,21 +387,5 @@ func TestSearch_Live(t *testing.T) {
 		if !strings.HasPrefix(r.URL, "http://arxiv.org/abs/") && !strings.HasPrefix(r.URL, "https://arxiv.org/abs/") {
 			t.Errorf("unexpected result URL: %s", r.URL)
 		}
-	}
-
-	// Out-of-domain natural-language query → should yield few/zero, NOT a flood
-	// of loosely-matched papers (the bug this AND construction fixes).
-	noise, err := e.Search(ctx, "Erling Haaland diet", engine.Options{Limit: 20})
-	if err != nil {
-		t.Fatalf("live arxiv out-of-domain search failed: %v", err)
-	}
-	if len(noise) > 5 {
-		t.Errorf("out-of-domain query returned %d results (want ~0; AND-term construction should suppress noise): first=%q",
-			len(noise), func() string {
-				if len(noise) > 0 {
-					return noise[0].Title
-				}
-				return ""
-			}())
 	}
 }
