@@ -17,9 +17,13 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/cli"
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
+	"github.com/openmtx/meta-search-tool/internal/engine/arxiv"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/hackernews"
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
+	"github.com/openmtx/meta-search-tool/internal/engine/pubmed"
+	"github.com/openmtx/meta-search-tool/internal/engine/stackexchange"
 	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
@@ -38,6 +42,18 @@ func main() {
 // "missing-key" rather than silently vanishing.
 func defaultRegistry() *engine.Registry {
 	reg := engine.NewRegistry()
+	if err := reg.Register(arxiv.New()); err != nil {
+		panic("arxiv: " + err.Error())
+	}
+	if err := reg.Register(pubmed.New()); err != nil {
+		panic("pubmed: " + err.Error())
+	}
+	if err := reg.Register(stackexchange.New()); err != nil {
+		panic("stackexchange: " + err.Error())
+	}
+	if err := reg.Register(hackernews.New()); err != nil {
+		panic("hackernews: " + err.Error())
+	}
 	if err := reg.Register(brave.New()); err != nil {
 		panic("brave: " + err.Error())
 	}
