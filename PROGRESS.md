@@ -5,13 +5,12 @@
 
 ## You are here — snapshot (keep current)
 
-- **Active:** Tier B → Stage 3 done. Next: Tier C (scraped general web)
-  (B.1.6 ✅, B.3.1 ✅; B.2.1 table polish deferred — all live tests already exist)
-- **Last:** 2026-07-09 — Sprint B.3.1 complete: `Category` on `EngineInfo`;
-  `Registry.ExpandNames`; 9 engines categorized; `--engine academic|free|keyed|
-  all` group aliases; `--list-engines` shows category column. 390 tests green
-  (-race) + 7 live skips. arxiv scoped to `--engine academic`; general-web
-  default without `-e` won't run arxiv.
+- **Active:** Tier C → Stage 1 done. Next: Sprint C.1.1 (google keyed API)
+  (C.1.0 ddg vqd multi-page ✅)
+- **Last:** 2026-07-09 — Sprint C.1.0 complete: ddg now fetches multiple pages
+  via vqd token (SearXNG mechanism). Live test returns 30 results (was ~10);
+  `--engine ddg "nvidia news"` returns 24 real results. 401 tests green (-race)
+  + 7 live skips.
 - **Last:** 2026-07-09 — Sprint B.1.6: `table` format + E2E integration tests ✅
 - **Last:** 2026-07-09 — ddg enabled by default (Descriptor Enabled true; overturns
   §17.3 "off by default"). Live testing showed ddg reliable while mojeek 403-blocks;
@@ -120,6 +119,27 @@ and wired it into the full pipeline.
 - **Next:** Sprint B.3.1 (engine categories & aliases)
 
 ## Log
+
+## 2026-07-09 — Sprint C.1.0: ddg vqd multi-page
+
+Implemented DDG vqd-powered multi-page pagination (SearXNG mechanism).
+
+- **Done:**
+  - `internal/engine/ddg/ddg.go`: `fetch()` now loops — page 1 extracts vqd from
+    `<input name="vqd">`; pages 2+ add `vqd`/`s`/`dc`/`api=d.js`/`o=json`/`v=l`
+    params (offset formula: 10 + (pageno-2)*15). Same UA reused across pages.
+    Partial results returned on page N failure (§7 contract).
+  - Added `buildNextPageBody(q, vqd, offset)` and `extractVQDFromHTML(html)`.
+  - 3 new multi-page tests (basic, partial-failure CAPTCHA, no-vqd stop) +
+    2 unit tests (buildNextPageBody, extractVQDFromHTML) = 10 new subtests.
+  - Live test updated to verify ≥30 results.
+- **Verified:** `gofmt -l .` clean; `go build/vet` clean;
+  `go test -race -count=1 ./...` → **401 PASS, 7 SKIP** (+11 net from 390);
+  `MST_ITEST=1 ddg TestSearch_Live` → **30 results** (was ~10);
+  `--engine ddg "nvidia news"` → 24 real NVIDIA results.
+- **Files:** ddg.go, ddg_test.go, TASKS.md, PROGRESS.md.
+- **Blocked on:** nothing
+- **Next:** Sprint C.1.1 — google keyed API.
 
 ## 2026-07-09 — Sprint B.3.1: engine categories & group aliases
 

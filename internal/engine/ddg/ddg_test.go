@@ -171,7 +171,8 @@ func TestUASelection(t *testing.T) {
 // === httptest round-trip ====================================================
 
 // TestSearch_Httptest verifies the request mechanics (POST, form body, browser
-// headers per docs/DDG-research.md) and result parsing end to end.
+// headers per docs/DDG-research.md) and result parsing end to end (page 1 only
+// — no vqd in fixture, so pagination stops after page 1).
 func TestSearch_Httptest(t *testing.T) {
 	// Pin the UA for a deterministic assertion (default rotates at random).
 	const testUA = "TestBrowser/1.0 (ddg-unit)"
@@ -204,7 +205,7 @@ func TestSearch_Httptest(t *testing.T) {
 		if got := r.Header.Get("Referer"); got != "https://html.duckduckgo.com/html/" {
 			t.Errorf("Referer = %q, want https://html.duckduckgo.com/html/", got)
 		}
-		// Form body: q, b (empty), kl (wt-wt). FormValue decodes the POST body.
+		// Form body: page 1 (q, b, kl), no vqd.
 		if q := r.FormValue("q"); q != "test query" {
 			t.Errorf("q = %q, want test query", q)
 		}
@@ -213,6 +214,9 @@ func TestSearch_Httptest(t *testing.T) {
 		}
 		if kl := r.FormValue("kl"); kl != "wt-wt" {
 			t.Errorf("kl = %q, want wt-wt", kl)
+		}
+		if v := r.FormValue("vqd"); v != "" {
+			t.Errorf("page 1 must not have vqd, got %q", v)
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(fixture))
@@ -239,6 +243,147 @@ func TestSearch_Httptest(t *testing.T) {
 	}
 	if results[0].Snippet != "Go programming language." {
 		t.Errorf("snippet[0] = %q, want Go programming language.", results[0].Snippet)
+	}
+}
+
+// TestSearch_MultiPage_Httptest verifies multi-page vqd-powered accumulator:
+// page 1 returns results + vqd token; page 2 returns more results (detected by
+// the presence of vqd in the form body).
+func TestSearch_MultiPage_Httptest(t *testing.T) {
+	const testUA = "TestBrowser/1.0 (ddg-unit)"
+	SetUASelector(func() string { return testUA })
+	defer SetUASelector(nil)
+
+	var pageCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageCount++
+		vqd := r.FormValue("vqd")
+		if vqd == "" {
+			// Page 1: return results + vqd inside a form.
+			html := `<html><body><form><input name="vqd" value="TOKEN123"></form><div id="links">` +
+				webResult("https://example.com/a", "Page1 Result A", "Snippet A.") +
+				`</div></body></html>`
+			w.Write([]byte(html))
+			return
+		}
+		// Page 2+: verify vqd and pagination params.
+		if vqd != "TOKEN123" {
+			t.Errorf("page 2 vqd = %q, want TOKEN123", vqd)
+		}
+		if r.FormValue("api") != "d.js" || r.FormValue("o") != "json" || r.FormValue("v") != "l" {
+			t.Errorf("page 2 missing api/o/v params")
+		}
+		if r.FormValue("s") != "10" || r.FormValue("dc") != "11" {
+			t.Errorf("page 2 offset: s=%q dc=%q, want s=10 dc=11", r.FormValue("s"), r.FormValue("dc"))
+		}
+		html := `<html><body><div id="links">` +
+			webResult("https://example.com/b", "Page2 Result B", "Snippet B.") +
+			webResult("https://example.com/c", "Page2 Result C", "Snippet C.") +
+			`</div></body></html>`
+		w.Write([]byte(html))
+	}))
+	defer ts.Close()
+
+	origBase := ScrapeBase()
+	SetScrapeBase(ts.URL)
+	defer SetScrapeBase(origBase)
+
+	e := New()
+	// Limit = 3 means fetch stops after page 2 (1 result + 2 results = 3 ≥ limit).
+	results, err := e.Search(context.Background(), "test query", engine.Options{Limit: 3})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if pageCount != 2 {
+		t.Errorf("pages fetched = %d, want 2", pageCount)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3 (1 from page1 + 2 from page2)", len(results))
+	}
+	if results[0].Title != "Page1 Result A" {
+		t.Errorf("result[0] = %q, want Page1 Result A", results[0].Title)
+	}
+	if results[1].Title != "Page2 Result B" {
+		t.Errorf("result[1] = %q, want Page2 Result B", results[1].Title)
+	}
+	if results[2].Title != "Page2 Result C" {
+		t.Errorf("result[2] = %q, want Page2 Result C", results[2].Title)
+	}
+}
+
+// TestSearch_MultiPage_PartialFailure verifies that when page 2+ fails, the
+// partial results from page 1 are returned with the error (per §7).
+func TestSearch_MultiPage_PartialFailure(t *testing.T) {
+	const testUA = "TestBrowser/1.0 (ddg-unit)"
+	SetUASelector(func() string { return testUA })
+	defer SetUASelector(nil)
+
+	var pageCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageCount++
+		vqd := r.FormValue("vqd")
+		if vqd == "" {
+			html := `<html><body><form><input name="vqd" value="TOKEN123"></form><div id="links">` +
+				webResult("https://example.com/a", "Page1 Only", "Partial.") +
+				`</div></body></html>`
+			w.Write([]byte(html))
+			return
+		}
+		// Page 2 returns CAPTCHA.
+		w.Write([]byte(`<html><body><form id="challenge-form"></form></body></html>`))
+	}))
+	defer ts.Close()
+
+	origBase := ScrapeBase()
+	SetScrapeBase(ts.URL)
+	defer SetScrapeBase(origBase)
+
+	e := New()
+	results, err := e.Search(context.Background(), "test", engine.Options{Limit: 10})
+	// Should return partial results WITH the CAPTCHA error.
+	if err == nil {
+		t.Fatal("expected error on CAPTCHA, got nil")
+	}
+	if !errors.Is(err, ErrCaptcha) {
+		t.Errorf("err = %v, want ErrCaptcha", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1 (partial from page 1)", len(results))
+	}
+	if results[0].Title != "Page1 Only" {
+		t.Errorf("result = %q, want Page1 Only", results[0].Title)
+	}
+	if pageCount != 2 {
+		t.Errorf("pages = %d, want 2", pageCount)
+	}
+}
+
+// TestSearch_MultiPage_NoVQD verifies that when page 1 has no vqd token,
+// pagination stops after page 1 (not an error — some queries may not get vqd).
+func TestSearch_MultiPage_NoVQD(t *testing.T) {
+	var pageCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageCount++
+		// No vqd in the response.
+		html := ddgResultsHTML(webResult("https://example.com/x", "No VQD", "Snippet."))
+		w.Write([]byte(html))
+	}))
+	defer ts.Close()
+
+	origBase := ScrapeBase()
+	SetScrapeBase(ts.URL)
+	defer SetScrapeBase(origBase)
+
+	e := New()
+	results, err := e.Search(context.Background(), "test", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pageCount != 1 {
+		t.Errorf("pages = %d, want 1 (no vqd → no pagination)", pageCount)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
 	}
 }
 
@@ -319,6 +464,86 @@ func TestBuildRequestBody(t *testing.T) {
 			}
 			if v.Get("kl") != "wt-wt" {
 				t.Errorf("kl = %q, want wt-wt", v.Get("kl"))
+			}
+		})
+	}
+}
+
+// === buildNextPageBody =====================================================
+
+func TestBuildNextPageBody(t *testing.T) {
+	tests := []struct {
+		name   string
+		q      string
+		vqd    string
+		offset int
+		wantS  string // expected s param value
+		wantDC string // expected dc param value
+	}{
+		{"page 2 offset 10", "test", "VQD123", 10, "10", "11"},
+		{"page 3 offset 25", "go", "XYZ", 25, "25", "26"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enc := buildNextPageBody(tt.q, tt.vqd, tt.offset)
+			v, err := url.ParseQuery(enc)
+			if err != nil {
+				t.Fatalf("ParseQuery: %v", err)
+			}
+			if v.Get("q") != tt.q {
+				t.Errorf("q = %q, want %q", v.Get("q"), tt.q)
+			}
+			if v.Get("vqd") != tt.vqd {
+				t.Errorf("vqd = %q, want %q", v.Get("vqd"), tt.vqd)
+			}
+			if v.Get("b") != "" {
+				t.Errorf("b = %q, want empty", v.Get("b"))
+			}
+			if v.Get("nextParams") != "" {
+				t.Errorf("nextParams = %q, want empty", v.Get("nextParams"))
+			}
+			if v.Get("api") != "d.js" {
+				t.Errorf("api = %q, want d.js", v.Get("api"))
+			}
+			if v.Get("o") != "json" {
+				t.Errorf("o = %q, want json", v.Get("o"))
+			}
+			if v.Get("v") != "l" {
+				t.Errorf("v = %q, want l", v.Get("v"))
+			}
+			if v.Get("s") != tt.wantS {
+				t.Errorf("s = %q, want %q", v.Get("s"), tt.wantS)
+			}
+			if v.Get("dc") != tt.wantDC {
+				t.Errorf("dc = %q, want %q", v.Get("dc"), tt.wantDC)
+			}
+			if v.Get("kl") != "wt-wt" {
+				t.Errorf("kl = %q, want wt-wt", v.Get("kl"))
+			}
+		})
+	}
+}
+
+// === extractVQDFromHTML ====================================================
+
+func TestExtractVQDFromHTML(t *testing.T) {
+	tests := []struct {
+		name string
+		html string
+		want string
+	}{
+		{"vqd present in form", `<html><body><form><input name="vqd" value="ABC123"></form></body></html>`, "ABC123"},
+		{"no vqd input", `<html><body><div id="links">...</div></body></html>`, ""},
+		{"empty html", "", ""},
+		{"vqd with extra whitespace", `<html><body><form><input name="vqd" value="  TOKEN  "></form></body></html>`, "TOKEN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractVQDFromHTML(tt.html)
+			if got != tt.want {
+				t.Errorf("extractVQDFromHTML = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -551,18 +776,18 @@ func TestSearchWithRaw(t *testing.T) {
 // === Live integration test (§14, MST_ITEST=1) ===============================
 
 // TestSearch_Live verifies the engine against the real html.duckduckgo.com
-// endpoint — confirming the request mechanics and selectors still match live
-// markup. Skipped unless MST_ITEST=1. This is the gate the existing DECISIONS
-// entry requires before promoting ddg toward default-on.
+// endpoint — including multi-page vqd-powered pagination to reach the fetch
+// limit (~30 for default --limit 10). Skipped unless MST_ITEST=1.
 func TestSearch_Live(t *testing.T) {
 	if os.Getenv("MST_ITEST") != "1" {
 		t.Skip("skipping live test; set MST_ITEST=1 to hit html.duckduckgo.com")
 	}
 	e := New()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	results, err := e.Search(ctx, "go programming language", engine.Options{Limit: 20})
+	// FetchLimit for --limit 10 → max((0+10)*3, 20) = 30.
+	results, err := e.Search(ctx, "go programming language", engine.Options{Limit: 30})
 	if err != nil {
 		t.Fatalf("live ddg search failed (selectors may have drifted or IP blocked): %v", err)
 	}
@@ -571,6 +796,11 @@ func TestSearch_Live(t *testing.T) {
 	}
 	t.Logf("ddg live returned %d results; first: %q <%s> — %s",
 		len(results), results[0].Title, results[0].URL, results[0].Snippet)
+
+	// With multi-page, we should get more than a single page (~10).
+	if len(results) < 10 {
+		t.Errorf("got %d results, want >= 10 (multi-page should accumulate more than a single page)", len(results))
+	}
 
 	// Sanity: result URLs must not be left as duckduckgo.com redirect links
 	// (would indicate uddg= unwrapping is broken).

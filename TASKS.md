@@ -190,13 +190,17 @@ detection (`ErrCaptcha`), ≥500-char query guard, `uddg=` unwrap. §12 scrape-U
 carve-out folded into spec. **`MST_ITEST=1` live test green** (10 real
 results); full suite 341 tests green (-race). Single page only — see follow-up.
 
-#### Sprint C.1.0 — `ddg` `vqd` multi-page (follow-up)
-- [ ] Extract `vqd` from page-1 response (`<input name="vqd">`), cache per
-      `(query, UA)`; request page 2+ with `s`/`dc`/`vqd`/`api=d.js`/`o=json`/
-      `v=l` to satisfy the ranker's `FetchLimit` (~30)
-- [ ] Paginating-engine partial-results contract (§7); tests
-- **DoD:** `MST_ITEST=1` live test returns ≥`min(--limit*3,20)` results when DDG
-  has them; `go test -race ./...` green.
+#### ✅ Sprint C.1.0 — `ddg` `vqd` multi-page   ▶ complete
+- [x] Extract `vqd` from page-1 (`<input name="vqd">`), cache per Search call
+- [x] Pages 2+ POST with `s`/`dc`/`vqd`/`api=d.js`/`o=json`/`v=l` (SearXNG
+      offset formula: offset = 10 + (pageno-2)*15)
+- [x] Partial-results contract (§7): if page N fails, return accumulated
+      results with error
+- [x] 3 new tests: multi-page httptest, partial-failure CAPTCHA, no-vQD stop
+- [x] Live test verifies ≥30 results (was ~10 from single page)
+- **DoD:** `MST_ITEST=1` live test returns **30 results** (FetchLimit for
+  `--limit 10`); 401 tests green (-race) + 7 skips; `ngine ddg "nvidia news"`
+  returns 24 real NVIDIA news results (up from ~10).
 
 #### Sprint C.1.1 — `google` (keyed API)
 - [ ] `internal/engine/google/google.go` — Google Programmable Search Engine API
