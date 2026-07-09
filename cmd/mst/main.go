@@ -3,6 +3,9 @@
 // A command-line meta-search tool that fans out concurrent queries to multiple
 // search engines, merges and re-ranks the results (RRF), and emits them as JSON
 // (or jsonl/text) for an AI agent harness to consume. See docs/SPEC.md.
+//
+// The version string is set at build time with -ldflags "-X main.version=X.Y.Z".
+// Defaults to "dev" when not provided.
 package main
 
 import (
@@ -18,6 +21,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/arxiv"
+	"github.com/openmtx/meta-search-tool/internal/engine/bing"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
 	"github.com/openmtx/meta-search-tool/internal/engine/google"
@@ -26,13 +30,16 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
 	"github.com/openmtx/meta-search-tool/internal/engine/pubmed"
 	"github.com/openmtx/meta-search-tool/internal/engine/stackexchange"
+	"github.com/openmtx/meta-search-tool/internal/engine/tavily"
 	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 	"github.com/openmtx/meta-search-tool/internal/search"
 )
 
-const version = "dev"
+// version is set at build time with -ldflags "-X main.version=v0.3.0".
+// Defaults to "dev" for local builds.
+var version = "dev"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, defaultRegistry()))
@@ -73,6 +80,12 @@ func defaultRegistry() *engine.Registry {
 	}
 	if err := reg.Register(google.New()); err != nil {
 		panic("google: " + err.Error())
+	}
+	if err := reg.Register(bing.New()); err != nil {
+		panic("bing: " + err.Error())
+	}
+	if err := reg.Register(tavily.New()); err != nil {
+		panic("tavily: " + err.Error())
 	}
 	return reg
 }
@@ -148,7 +161,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	// takes precedence when both are set.
 	if flags.Raw {
 		start := time.Now()
-		runs := search.DispatchRaw(ctx, p.engines, query, p.fetchLimit, p.timeouts)
+		runs := search.DispatchRaw(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
 		tookMs := time.Since(start).Milliseconds()
 		env := format.BuildRawEnvelope(query, runs, p.limit, tookMs)
 		exit := computeExit(rawPayloadCount(runs), runs, requireSet, flags.Strict)
@@ -167,7 +180,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	// requires a -v notice when --offset is set under --no-merge.
 	if flags.NoMerge {
 		start := time.Now()
-		runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts)
+		runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
 		tookMs := time.Since(start).Milliseconds()
 		if p.offset != 0 {
 			vlog(stderr, flags.Verbose, 1, "--offset is a no-op under --no-merge (results are not merged)")
@@ -186,11 +199,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 
 	// Merged path: dispatch → rank → window (§9).
 	start := time.Now()
-	runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts)
+	runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
 	results := rank.Window(rank.Rank(runs, p.weights, p.regOrder, p.rrfK), p.offset, p.limit)
 	tookMs := time.Since(start).Milliseconds()
 
-	env := format.BuildEnvelope(query, runs, results, p.limit, tookMs)
+	// Extract the AI-generated answer from the tavily raw payload (if any).
+	// The answer does NOT compose with RRF — it is surfaced as a separate
+	// top-level field in the output envelope (§5 Tier D, Sprint D.1.2).
+	answer := extractTavilyAnswer(runs)
+
+	env := format.BuildEnvelope(query, runs, results, p.limit, tookMs, answer)
 
 	exit := computeExit(len(results), runs, requireSet, flags.Strict)
 	emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
@@ -333,4 +351,18 @@ func validateListFormat(format string) error {
 // emitError writes the §11 structured error object to w.
 func emitError(w io.Writer, code, message string, exit int) {
 	w.Write(format.MarshalError(code, message, exit))
+}
+
+// extractTavilyAnswer extracts the AI-generated answer from the tavily engine's
+// raw payload, if present. Returns empty string if tavily didn't run, didn't
+// return an answer, or include_answer was not enabled. The answer is surfaced
+// as a separate top-level field in the output envelope (§5 Tier D, Sprint D.1.2)
+// and does NOT compose with RRF.
+func extractTavilyAnswer(runs []engine.EngineRun) string {
+	for _, r := range runs {
+		if r.Engine == "tavily" && r.Raw != nil {
+			return tavily.GetAnswerFromRaw(r.Raw)
+		}
+	}
+	return ""
 }

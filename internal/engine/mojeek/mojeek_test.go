@@ -203,8 +203,8 @@ func TestDescriptor(t *testing.T) {
 	if info.DefaultWeight != 1.3 {
 		t.Errorf("DefaultWeight = %f, want 1.3", info.DefaultWeight)
 	}
-	if !info.Enabled {
-		t.Error("Enabled should be true")
+	if info.Enabled {
+		t.Error("Enabled should be false (SearXNG compat)")
 	}
 }
 

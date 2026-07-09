@@ -1,7 +1,13 @@
-// Package google implements Google search (§5 Tier C) with hybrid mode:
+// Package google implements Google search (§5 Tier C) with triple-mode:
 //
-//  1. Official API (keyed):   when GOOGLE_API_KEY + GOOGLE_CX are set
-//  2. HTML scrape (keyless):  SearXNG mechanism, fallback when keys missing
+//  1. Official API (keyed):         when GOOGLE_API_KEY + GOOGLE_CX are set
+//  2. Public CSE token (keyless):   when no API key but a CX is available
+//     (default CX: blackle.com's public CSE)
+//  3. HTML scrape (keyless):        SearXNG mechanism, fallback when no CX
+//
+// Mode precedence (first wins): official API > public CSE > HTML scrape.
+// The public CSE mode follows SearXNG's approach: fetches a session token from
+// google.com/cse/cse.js?cx=<CX> and queries cse.google.com/cse/element/v1.
 //
 // The HTTP retry/backoff policy (§11) is shared via internal/engine/retry.
 package google
@@ -15,6 +21,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/openmtx/meta-search-tool/internal/engine"
@@ -28,6 +36,16 @@ var apiBase = "https://www.googleapis.com/customsearch/v1"
 
 // scrapeBase is the Google HTML search endpoint for scrape fallback.
 var scrapeBase = "https://www.google.com/search"
+
+// cseTokenBase is the Google CSE JS endpoint from which we obtain a session token.
+var cseTokenBase = "https://www.google.com/cse/cse.js"
+
+// cseSearchBase is the Google CSE element API endpoint.
+var cseSearchBase = "https://cse.google.com/cse/element/v1"
+
+// defaultPublicCX is the default public CSE ID used for keyless Google search.
+// This is blackle.com's public Programmable Search Engine, same as SearXNG uses.
+var defaultPublicCX = "partner-pub-8993703457585266:4862972284"
 
 // userAgent is the HTTP User-Agent sent to Google (§12).
 const userAgent = "mst/dev"
@@ -47,6 +65,24 @@ func SetScrapeBase(base string) { scrapeBase = base }
 // ScrapeBase returns the current scrape base URL.
 func ScrapeBase() string { return scrapeBase }
 
+// SetCSETokenBase overrides the CSE token URL for testing.
+func SetCSETokenBase(base string) { cseTokenBase = base }
+
+// CSETokenBase returns the current CSE token URL.
+func CSETokenBase() string { return cseTokenBase }
+
+// SetCSESearchBase overrides the CSE search URL for testing.
+func SetCSESearchBase(base string) { cseSearchBase = base }
+
+// CSESearchBase returns the current CSE search URL.
+func CSESearchBase() string { return cseSearchBase }
+
+// SetDefaultPublicCX overrides the default public CX for testing.
+func SetDefaultPublicCX(cx string) { defaultPublicCX = cx }
+
+// DefaultPublicCX returns the current default public CX.
+func DefaultPublicCX() string { return defaultPublicCX }
+
 // google is the Google search engine implementation (hybrid API + scrape).
 type google struct{}
 
@@ -57,15 +93,17 @@ func New() engine.Engine { return &google{} }
 func (*google) Name() string { return "google" }
 
 // Descriptor implements engine.Engine. The engine is effectively keyless — if
-// GOOGLE_API_KEY + GOOGLE_CX are set, it uses the official JSON API; otherwise
-// it falls back to HTML scrape (SearXNG mechanism). Disabled by default.
+// GOOGLE_API_KEY + GOOGLE_CX are set, it uses the official JSON API; if only
+// a CX is available (env var or built-in default), it uses the public CSE token
+// approach (SearXNG-style); otherwise it falls back to HTML scrape. Disabled
+// by default.
 func (*google) Descriptor() engine.EngineInfo {
 	return engine.EngineInfo{
 		Name:          "google",
-		Keyed:         false, // works without keys (scrape fallback)
+		Keyed:         false, // works without keys (public CSE or scrape)
 		KeyEnv:        "",
 		DefaultWeight: 1.0,
-		Enabled:       false, // opt-in (scrape is best-effort)
+		Enabled:       false, // opt-in
 		Category:      "general",
 	}
 }
@@ -83,14 +121,34 @@ func (g *google) SearchWithRaw(ctx context.Context, q string, opts engine.Option
 	return g.fetch(ctx, q, opts)
 }
 
-// fetch chooses API or scrape based on env vars.
+// effectiveCX returns the CSE ID to use: GOOGLE_CX env var if set, otherwise
+// the built-in default public CX (blackle.com's public CSE, same as SearXNG).
+func effectiveCX() string {
+	if cx := os.Getenv("GOOGLE_CX"); cx != "" {
+		return cx
+	}
+	return defaultPublicCX
+}
+
+// fetch chooses the best available mode in order:
+//  1. Official API (GOOGLE_API_KEY + CX)
+//  2. Public CSE token (CX available from env or built-in default)
+//  3. HTML scrape (fallback)
 func (g *google) fetch(ctx context.Context, q string, opts engine.Options) ([]engine.Result, any, error) {
 	apiKey := os.Getenv("GOOGLE_API_KEY")
-	cx := os.Getenv("GOOGLE_CX")
+	cx := effectiveCX()
 
-	if apiKey != "" && cx != "" {
+	// Mode 1: Official REST API (needs both key and CX).
+	if apiKey != "" && os.Getenv("GOOGLE_CX") != "" {
 		return g.fetchAPI(ctx, q, apiKey, cx, opts)
 	}
+
+	// Mode 2: Public CSE token approach (needs only a CX, no API key).
+	if cx != "" {
+		return g.fetchPublicCSE(ctx, q, cx, opts)
+	}
+
+	// Mode 3: HTML scrape fallback.
 	return g.fetchScrape(ctx, q, opts)
 }
 
@@ -156,6 +214,216 @@ func buildAPIURL(q, apiKey, cx string, limit int) (string, error) {
 	params.Set("num", fmt.Sprintf("%d", limit))
 	base.RawQuery = params.Encode()
 	return base.String(), nil
+}
+
+// ---- Public CSE token mode (SearXNG-style, keyless) ------------------------
+
+// cseTokenCache holds a cached CSE session token with expiry.
+type cseTokenCache struct {
+	mu      sync.Mutex
+	token   string
+	cselibv string
+	exp     string
+	expiry  time.Time
+}
+
+var cseCache cseTokenCache
+
+// getCSEToken returns a valid CSE session token, fetching a fresh one if
+// the cache is empty or expired. Follows SearXNG's approach: GET
+// google.com/cse/cse.js?cx=<CX> and parse the JSONP response for cse_token.
+func getCSEToken(ctx context.Context, cx string) (token, cselibv, exp string, _ error) {
+	cseCache.mu.Lock()
+	defer cseCache.mu.Unlock()
+
+	if time.Now().Before(cseCache.expiry) && cseCache.token != "" {
+		return cseCache.token, cseCache.cselibv, cseCache.exp, nil
+	}
+
+	token, cselibv, exp, err := fetchCSEToken(ctx, cx)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	cseCache.token = token
+	cseCache.cselibv = cselibv
+	cseCache.exp = exp
+	cseCache.expiry = time.Now().Add(1 * time.Hour)
+	return token, cselibv, exp, nil
+}
+
+// ResetCSETokenCache clears the cached CSE token (for testing).
+func ResetCSETokenCache() {
+	cseCache.mu.Lock()
+	defer cseCache.mu.Unlock()
+	cseCache.token = ""
+	cseCache.expiry = time.Time{}
+}
+
+// fetchCSEToken performs the actual HTTP request to get a CSE token from Google.
+func fetchCSEToken(ctx context.Context, cx string) (token, cselibv, exp string, _ error) {
+	tokenURL := cseTokenBase + "?cx=" + url.QueryEscape(cx)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
+	if err != nil {
+		return "", "", "", fmt.Errorf("google: cse token request: %w", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", "", fmt.Errorf("google: cse token fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", "", fmt.Errorf("google: cse token read: %w", err)
+	}
+
+	// Response is JSONP like: window.__gcse || ...({cse_token:"...",cselibVersion:"...",exp:["..."]});
+	// Extract the JSON object between ({ and });
+	text := string(body)
+	start := strings.LastIndex(text, "({")
+	end := strings.LastIndex(text, "});")
+	if start < 0 || end < 0 || end <= start+1 {
+		return "", "", "", fmt.Errorf("google: cse token: unexpected response format")
+	}
+
+	var tokenData struct {
+		CSEToken      string   `json:"cse_token"`
+		CSELibVersion string   `json:"cselibVersion"`
+		Exp           []string `json:"exp"`
+	}
+	if err := json.Unmarshal([]byte(text[start+1:end+1]), &tokenData); err != nil {
+		return "", "", "", fmt.Errorf("google: cse token parse: %w", err)
+	}
+	if tokenData.CSEToken == "" {
+		return "", "", "", fmt.Errorf("google: cse token: empty token")
+	}
+
+	expStr := strings.Join(tokenData.Exp, ",")
+	return tokenData.CSEToken, tokenData.CSELibVersion, expStr, nil
+}
+
+func (g *google) fetchPublicCSE(ctx context.Context, q string, cx string, opts engine.Options) ([]engine.Result, any, error) {
+	token, cselibv, exp, err := getCSEToken(ctx, cx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reqURL, err := buildCSESearchURL(q, cx, token, cselibv, exp, opts.Limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("google: cse search build: %w", err)
+	}
+
+	newReq := func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("Referer", "https://cse.google.com/")
+		return httpReq, nil
+	}
+
+	resp, err := retry.Do(ctx, "google", newReq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("google: cse search read: %w", err)
+	}
+
+	// Response is JSONP: _(<json>). Strip the callback wrapper.
+	jsonStr := stripJSONP(string(body))
+
+	var cseResp cseResponse
+	if err := json.Unmarshal([]byte(jsonStr), &cseResp); err != nil {
+		return nil, nil, fmt.Errorf("google: cse search decode: %w", err)
+	}
+
+	if cseResp.Error != nil {
+		return nil, nil, fmt.Errorf("google: cse search error: %s", cseResp.Error.Message)
+	}
+
+	// Decode the native body generically for --raw.
+	var raw any
+	_ = json.Unmarshal([]byte(jsonStr), &raw)
+
+	return parseCSEResults(cseResp), raw, nil
+}
+
+// stripJSONP removes the JSONP callback wrapper, returning just the JSON body.
+// Expected format: _({...}) or similar callback({...}).
+func stripJSONP(text string) string {
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start < 0 || end < 0 || end < start {
+		return text
+	}
+	return text[start : end+1]
+}
+
+// buildCSESearchURL constructs the CSE element v1 API URL.
+func buildCSESearchURL(q, cx, token, cselibv, exp string, limit int) (string, error) {
+	base, err := url.Parse(cseSearchBase)
+	if err != nil {
+		return "", err
+	}
+	params := base.Query()
+	params.Set("rsz", "filtered_cse")
+	params.Set("num", "20") // page size, fixed at 20 per SearXNG
+	params.Set("hl", "en")
+	params.Set("cselibv", cselibv)
+	params.Set("cx", cx)
+	params.Set("q", q)
+	params.Set("safe", "medium")
+	params.Set("cse_tok", token)
+	params.Set("callback", "_")
+	params.Set("rurl", "")
+	params.Set("searchtype", "")
+	if exp != "" {
+		params.Set("exp", exp)
+	}
+	base.RawQuery = params.Encode()
+	return base.String(), nil
+}
+
+// cseResponse is the Google CSE element API JSON response.
+type cseResponse struct {
+	Results []cseResult  `json:"results"`
+	Error   *cseAPIError `json:"error,omitempty"`
+}
+
+type cseResult struct {
+	UnescapedURL        string `json:"unescapedUrl"`
+	TitleNoFormatting   string `json:"titleNoFormatting"`
+	ContentNoFormatting string `json:"contentNoFormatting"`
+}
+
+type cseAPIError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// parseCSEResults maps CSE results into engine.Result slices.
+func parseCSEResults(resp cseResponse) []engine.Result {
+	results := make([]engine.Result, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		if r.UnescapedURL == "" {
+			continue
+		}
+		results = append(results, engine.Result{
+			Title:   r.TitleNoFormatting,
+			URL:     r.UnescapedURL,
+			Snippet: r.ContentNoFormatting,
+		})
+	}
+	return results
 }
 
 // ---- HTML scrape fallback (SearXNG mechanism) ------------------------------

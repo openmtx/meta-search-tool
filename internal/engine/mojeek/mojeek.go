@@ -58,7 +58,7 @@ func (*mojeek) Descriptor() engine.EngineInfo {
 		Keyed:         false,
 		KeyEnv:        "",
 		DefaultWeight: 1.3,
-		Enabled:       true,
+		Enabled:       false, // disabled by default (SearXNG compat; enable with config or -e)
 		Category:      "general",
 	}
 }

@@ -51,7 +51,7 @@ func TestDispatch_BasicFanoutAndOrder(t *testing.T) {
 	}
 	runs := Dispatch(context.Background(), engines, "q", 10, map[string]time.Duration{
 		"alpha": time.Second, "beta": time.Second, "gamma": time.Second,
-	})
+	}, nil)
 	if len(runs) != 3 {
 		t.Fatalf("got %d runs, want 3", len(runs))
 	}
@@ -78,7 +78,7 @@ func TestDispatch_DeterministicOrderUnderVaryingLatency(t *testing.T) {
 		&fakeEngine{name: "fast", results: res("https://b/2"), delay: 1 * time.Millisecond},
 		&fakeEngine{name: "mid", results: res("https://c/3"), delay: 15 * time.Millisecond},
 	}
-	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines))
+	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines), nil)
 	got := []string{runs[0].Engine, runs[1].Engine, runs[2].Engine}
 	want := []string{"slow", "fast", "mid"}
 	for i := range want {
@@ -106,7 +106,7 @@ func TestDispatch_ConcurrencyCap(t *testing.T) {
 			maxInflight: &maxInflight,
 		}
 	}
-	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines))
+	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines), nil)
 	if len(runs) != n {
 		t.Fatalf("got %d runs, want %d", len(runs), n)
 	}
@@ -158,7 +158,7 @@ func TestDispatch_PerEngineTimeout(t *testing.T) {
 	runs := Dispatch(context.Background(), engines, "q", 10, map[string]time.Duration{
 		"ok":    time.Second,
 		"stuck": 50 * time.Millisecond,
-	})
+	}, nil)
 	if runs[0].Engine != "ok" && runs[0].Err != nil {
 		t.Errorf("ok engine errored: %v", runs[0].Err)
 	}
@@ -193,7 +193,7 @@ func TestDispatch_GlobalCancel(t *testing.T) {
 	done := make(chan struct{})
 	var runs []engine.EngineRun
 	go func() {
-		runs = Dispatch(ctx, engines, "q", 10, map[string]time.Duration{"a": time.Minute, "b": time.Minute})
+		runs = Dispatch(ctx, engines, "q", 10, map[string]time.Duration{"a": time.Minute, "b": time.Minute}, nil)
 		close(done)
 	}()
 	select {
@@ -215,7 +215,7 @@ func TestDispatch_ErrorDoesNotAbort(t *testing.T) {
 		&fakeEngine{name: "good", results: res("https://a/1")},
 		&fakeEngine{name: "bad", err: boom},
 	}
-	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines))
+	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines), nil)
 	good := findRun(runs, "good")
 	bad := findRun(runs, "bad")
 	if good == nil || good.Err != nil || len(good.Results) != 1 {
@@ -233,7 +233,7 @@ func TestDispatch_PanicRecovered(t *testing.T) {
 		&fakeEngine{name: "ok", results: res("https://a/1")},
 		&panicEngine{name: "kaboom"},
 	}
-	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines))
+	runs := Dispatch(context.Background(), engines, "q", 10, defaultTimeouts(engines), nil)
 	kaboom := findRun(runs, "kaboom")
 	if kaboom == nil || kaboom.Err == nil {
 		t.Fatalf("panicking engine should report an error, got %+v", kaboom)
@@ -252,7 +252,7 @@ func (p *panicEngine) Search(ctx context.Context, q string, opts engine.Options)
 }
 
 func TestDispatch_Empty(t *testing.T) {
-	runs := Dispatch(context.Background(), nil, "q", 10, nil)
+	runs := Dispatch(context.Background(), nil, "q", 10, nil, nil)
 	if len(runs) != 0 {
 		t.Errorf("empty dispatch = %v, want empty", runs)
 	}

@@ -56,7 +56,7 @@ func TestDescriptor(t *testing.T) {
 		t.Errorf("Name = %q, want google", info.Name)
 	}
 	if info.Keyed {
-		t.Error("Keyed should be false (engine works without keys via scrape)")
+		t.Error("Keyed should be false (engine works without keys via public CSE)")
 	}
 	if info.KeyEnv != "" {
 		t.Errorf("KeyEnv = %q, want empty", info.KeyEnv)
@@ -503,8 +503,376 @@ func TestSearch_API_SearchWithRaw(t *testing.T) {
 }
 
 // ============================================================================
-// ---- Scrape path (fallback when no API keys) --------------------------------
+// ---- Public CSE token mode (SearXNG-style, keyless) -------------------------
 // ============================================================================
+
+// cseFixtureJSON returns a valid Google CSE element API JSONP response.
+func cseFixtureJSON(results ...string) string {
+	if len(results) == 0 {
+		return `_({"results":[]})`
+	}
+	return `_({"results":[` + strings.Join(results, ",") + `]})`
+}
+
+func cseItemJSON(title, url, content string) string {
+	b, _ := json.Marshal(map[string]string{
+		"titleNoFormatting":   title,
+		"unescapedUrl":        url,
+		"contentNoFormatting": content,
+	})
+	return string(b)
+}
+
+// cseTokenResponse returns a JSONP response simulating google.com/cse/cse.js.
+func cseTokenResponse(token, cselibv string, exp ...string) string {
+	// Build a proper JSON object and wrap it in the JSONP callback.
+	expJSON, _ := json.Marshal(exp)
+	_ = expJSON // used in the json.Marshal below via the exp field
+	body, _ := json.Marshal(map[string]any{
+		"cse_token":     token,
+		"cselibVersion": cselibv,
+		"exp":           exp,
+	})
+	// The actual response is: window.__gcse||(window.__gcse={});(function(){var x=(<json>);})();
+	return `window.__gcse||(window.__gcse={});(function(){var x=(` + string(body) + `);})();`
+}
+
+func TestParseCSEResults(t *testing.T) {
+	resp := cseResponse{
+		Results: []cseResult{
+			{UnescapedURL: "https://example.com/1", TitleNoFormatting: "Result One", ContentNoFormatting: "Snippet one."},
+			{UnescapedURL: "https://example.com/2", TitleNoFormatting: "Result Two", ContentNoFormatting: "Snippet two."},
+		},
+	}
+	results := parseCSEResults(resp)
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	if results[0].Title != "Result One" || results[0].URL != "https://example.com/1" {
+		t.Errorf("result[0] = %+v, want title=Result One url=https://example.com/1", results[0])
+	}
+	if results[0].Snippet != "Snippet one." {
+		t.Errorf("snippet[0] = %q, want Snippet one.", results[0].Snippet)
+	}
+}
+
+func TestParseCSEResults_Empty(t *testing.T) {
+	resp := cseResponse{Results: []cseResult{}}
+	results := parseCSEResults(resp)
+	if len(results) != 0 {
+		t.Errorf("results = %d, want 0", len(results))
+	}
+}
+
+func TestParseCSEResults_SkipEmptyURL(t *testing.T) {
+	resp := cseResponse{
+		Results: []cseResult{
+			{UnescapedURL: "", TitleNoFormatting: "No URL", ContentNoFormatting: "skip"},
+			{UnescapedURL: "https://example.com/y", TitleNoFormatting: "Has URL", ContentNoFormatting: "keep"},
+		},
+	}
+	results := parseCSEResults(resp)
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if results[0].Title != "Has URL" {
+		t.Errorf("title = %q, want Has URL", results[0].Title)
+	}
+}
+
+func TestStripJSONP(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"standard callback", `_({"key":"val"})`, `{"key":"val"}`},
+		{"nested braces", `cb({"a":{"b":"c"}})`, `{"a":{"b":"c"}}`},
+		{"no wrapper", `{"key":"val"}`, `{"key":"val"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripJSONP(tt.input)
+			if got != tt.want {
+				t.Errorf("stripJSONP(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCSESearchURL(t *testing.T) {
+	u, err := buildCSESearchURL("test query", "cx123", "tok_abc", "v1.0", "e1,e2", 10)
+	if err != nil {
+		t.Fatalf("buildCSESearchURL error: %v", err)
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	q := parsed.Query()
+	if q.Get("q") != "test query" {
+		t.Errorf("q = %q, want test query", q.Get("q"))
+	}
+	if q.Get("cx") != "cx123" {
+		t.Errorf("cx = %q, want cx123", q.Get("cx"))
+	}
+	if q.Get("cse_tok") != "tok_abc" {
+		t.Errorf("cse_tok = %q, want tok_abc", q.Get("cse_tok"))
+	}
+	if q.Get("cselibv") != "v1.0" {
+		t.Errorf("cselibv = %q, want v1.0", q.Get("cselibv"))
+	}
+	if q.Get("exp") != "e1,e2" {
+		t.Errorf("exp = %q, want e1,e2", q.Get("exp"))
+	}
+	if q.Get("callback") != "_" {
+		t.Errorf("callback = %q, want _", q.Get("callback"))
+	}
+	if q.Get("rsz") != "filtered_cse" {
+		t.Errorf("rsz = %q, want filtered_cse", q.Get("rsz"))
+	}
+}
+
+func TestFetchCSEToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cse/cse.js" {
+			t.Errorf("path = %q, want /cse/cse.js", r.URL.Path)
+		}
+		w.Write([]byte(cseTokenResponse("token_123", "v2.0", "exp1", "exp2")))
+	}))
+	defer ts.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(ts.URL + "/cse/cse.js")
+	defer SetCSETokenBase(origTokenBase)
+
+	tok, libv, exp, err := fetchCSEToken(context.Background(), "test-cx")
+	if err != nil {
+		t.Fatalf("fetchCSEToken error: %v", err)
+	}
+	if tok != "token_123" {
+		t.Errorf("token = %q, want token_123", tok)
+	}
+	if libv != "v2.0" {
+		t.Errorf("cselibv = %q, want v2.0", libv)
+	}
+	if exp != "exp1,exp2" {
+		t.Errorf("exp = %q, want exp1,exp2", exp)
+	}
+}
+
+func TestFetchCSEToken_MissingToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`window.__gcse||(window.__gcse={});(function(){var x=({});})();`))
+	}))
+	defer ts.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(ts.URL + "/cse/cse.js")
+	defer SetCSETokenBase(origTokenBase)
+
+	_, _, _, err := fetchCSEToken(context.Background(), "test-cx")
+	if err == nil {
+		t.Fatal("expected error for missing cse_token")
+	}
+}
+
+func TestCSEToken_Cache(t *testing.T) {
+	ResetCSETokenCache()
+
+	var fetchCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCount++
+		w.Write([]byte(cseTokenResponse("tok", "v1")))
+	}))
+	defer ts.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(ts.URL)
+	defer SetCSETokenBase(origTokenBase)
+
+	// First call fetches.
+	tok1, _, _, err := getCSEToken(context.Background(), "cx")
+	if err != nil {
+		t.Fatalf("first getCSEToken: %v", err)
+	}
+	if tok1 != "tok" {
+		t.Errorf("first token = %q, want tok", tok1)
+	}
+	if fetchCount != 1 {
+		t.Errorf("fetchCount after first = %d, want 1", fetchCount)
+	}
+
+	// Second call uses cache.
+	tok2, _, _, err := getCSEToken(context.Background(), "cx")
+	if err != nil {
+		t.Fatalf("second getCSEToken: %v", err)
+	}
+	if tok2 != "tok" {
+		t.Errorf("second token = %q, want tok", tok2)
+	}
+	if fetchCount != 1 {
+		t.Errorf("fetchCount after second = %d, want 1 (cached)", fetchCount)
+	}
+}
+
+func TestSearch_CSE_Httptest(t *testing.T) {
+	ResetCSETokenCache()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate Google's JSONP response for cse.js
+		w.Write([]byte(cseTokenResponse("tok_abc", "v1", "e1", "e2")))
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ref := r.Header.Get("Referer"); ref != "https://cse.google.com/" {
+			t.Errorf("Referer = %q, want https://cse.google.com/", ref)
+		}
+		q := r.URL.Query()
+		if q.Get("q") != "test query" {
+			t.Errorf("q = %q, want test query", q.Get("q"))
+		}
+		if q.Get("cse_tok") != "tok_abc" {
+			t.Errorf("cse_tok = %q, want tok_abc", q.Get("cse_tok"))
+		}
+		w.Write([]byte(cseFixtureJSON(
+			cseItemJSON("CSE Result 1", "https://example.com/cse1", "First CSE snippet."),
+			cseItemJSON("CSE Result 2", "https://example.com/cse2", "Second CSE snippet."),
+		)))
+	}))
+	defer searchSrv.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(tokenSrv.URL)
+	defer SetCSETokenBase(origTokenBase)
+
+	origSearchBase := CSESearchBase()
+	SetCSESearchBase(searchSrv.URL)
+	defer SetCSESearchBase(origSearchBase)
+
+	// Ensure no GOOGLE_API_KEY is set so we hit the CSE path.
+	t.Setenv("GOOGLE_API_KEY", "")
+
+	g := New()
+	results, err := g.Search(context.Background(), "test query", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+	if results[0].Title != "CSE Result 1" {
+		t.Errorf("result[0].Title = %q, want CSE Result 1", results[0].Title)
+	}
+	if results[0].URL != "https://example.com/cse1" {
+		t.Errorf("result[0].URL = %q, want https://example.com/cse1", results[0].URL)
+	}
+	if results[0].Snippet != "First CSE snippet." {
+		t.Errorf("result[0].Snippet = %q, want First CSE snippet.", results[0].Snippet)
+	}
+}
+
+func TestSearch_CSE_Error(t *testing.T) {
+	ResetCSETokenCache()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(cseTokenResponse("tok", "v1")))
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`_({"error":{"code":429,"message":"rate limit exceeded"}})`))
+	}))
+	defer searchSrv.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(tokenSrv.URL)
+	defer SetCSETokenBase(origTokenBase)
+
+	origSearchBase := CSESearchBase()
+	SetCSESearchBase(searchSrv.URL)
+	defer SetCSESearchBase(origSearchBase)
+
+	g := New()
+	results, err := g.Search(context.Background(), "test", engine.Options{Limit: 10})
+	if err == nil {
+		t.Fatal("expected CSE search error")
+	}
+	if !strings.Contains(err.Error(), "rate limit") {
+		t.Errorf("error should mention rate limit: %v", err)
+	}
+	if results != nil {
+		t.Error("expected nil results on error")
+	}
+}
+
+func TestSearch_CSE_SearchWithRaw(t *testing.T) {
+	ResetCSETokenCache()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(cseTokenResponse("tok_raw", "v1")))
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`_({"results":[{"titleNoFormatting":"T","unescapedUrl":"https://e.com/x","contentNoFormatting":"S"}],"extraField":true})`))
+	}))
+	defer searchSrv.Close()
+
+	origTokenBase := CSETokenBase()
+	SetCSETokenBase(tokenSrv.URL)
+	defer SetCSETokenBase(origTokenBase)
+
+	origSearchBase := CSESearchBase()
+	SetCSESearchBase(searchSrv.URL)
+	defer SetCSESearchBase(origSearchBase)
+
+	re, ok := New().(engine.RawEngine)
+	if !ok {
+		t.Fatal("google must implement engine.RawEngine")
+	}
+	results, raw, err := re.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchWithRaw: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "T" {
+		t.Errorf("results = %+v, want 1 result Title=T", results)
+	}
+	rawMap, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("raw payload = %T, want map[string]any", raw)
+	}
+	if rawMap["extraField"] != true {
+		t.Errorf("raw missing extraField: %v", rawMap)
+	}
+}
+
+func TestSearch_CSE_ContextCancelled(t *testing.T) {
+	e := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	results, err := e.Search(ctx, "test", engine.Options{Limit: 10})
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
+	}
+	if results != nil {
+		t.Error("expected nil results")
+	}
+}
+
+// ============================================================================
+// ---- Scrape path (fallback) -------------------------------------------------
+// ============================================================================
+
+// scrapeOnly clears the default public CX so fetch() falls through to the
+// HTML scrape path. Restores after the test. Use in scrape-specific tests.
+func scrapeOnly(t *testing.T) {
+	t.Helper()
+	orig := DefaultPublicCX()
+	SetDefaultPublicCX("")
+	t.Cleanup(func() { SetDefaultPublicCX(orig) })
+}
 
 // ---- Scrape: buildScrapeURL -------------------------------------------------
 
@@ -631,9 +999,10 @@ func TestParseScrapeResults_Dedup(t *testing.T) {
 	}
 }
 
-// ---- Scrape: httptest round-trip -------------------------------------------
+// ---- Scrape: httptest round-trip (with scrapeOnly) -------------------------
 
 func TestSearch_Scrape_Httptest(t *testing.T) {
+	scrapeOnly(t)
 	fixture := scrapeResultsHTML(
 		scrapeResult("/url?q=https://example.com/1&sa=U", "Result 1", "Snippet 1."),
 		scrapeResult("/url?q=https://example.com/2&sa=U", "Result 2", "Snippet 2."),
@@ -683,6 +1052,7 @@ func TestSearch_Scrape_Httptest(t *testing.T) {
 }
 
 func TestSearch_Scrape_Captcha(t *testing.T) {
+	scrapeOnly(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><body>/sorry/</body></html>`))
 	}))
@@ -706,6 +1076,7 @@ func TestSearch_Scrape_Captcha(t *testing.T) {
 }
 
 func TestSearch_Scrape_MultiPage(t *testing.T) {
+	scrapeOnly(t)
 	var pageCount int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pageCount++
@@ -714,7 +1085,6 @@ func TestSearch_Scrape_MultiPage(t *testing.T) {
 				scrapeResult("/url?q=https://e.com/1&sa=U", "Page1", ""),
 			)))
 		} else {
-			// Page 2: return 1 result → loop continues (but hits Limit next check)
 			w.Write([]byte(scrapeResultsHTML(
 				scrapeResult("/url?q=https://e.com/2&sa=U", "Page2", ""),
 			)))
@@ -740,6 +1110,7 @@ func TestSearch_Scrape_MultiPage(t *testing.T) {
 }
 
 func TestSearch_Scrape_ContextCancelled(t *testing.T) {
+	scrapeOnly(t)
 	e := New()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
