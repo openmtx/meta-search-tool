@@ -41,7 +41,11 @@ type Flags struct {
 	ListEngines      bool
 	Verbose          int
 	Version          bool
-	QueryFromFlag    bool // true when -q/--query flag was used (vs positional)
+	DryRun           bool     // --dry-run: print resolved plan, exit 0
+	Fields           []string // --fields: result field projection
+	Schema           bool     // --schema: emit flag schema as JSON, exit 0
+	HelpJSON         bool     // --help-json: alias for --schema
+	QueryFromFlag    bool     // true when -q/--query flag was used (vs positional)
 }
 
 // Parse parses CLI flags from args. out receives --help usage text (errors are
@@ -99,6 +103,12 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	fs.BoolVar(&f.Raw, "raw", false, "Emit raw per-engine payloads without normalization (JSON only)")
 	fs.StringVar(&f.Config, "config", "", "Path to an explicit config file (overrides discovery)")
 	fs.CountVarP(&f.Verbose, "verbose", "v", "Verbosity level (-v = 1, -vv = 2)")
+
+	// Tier 3 — skill affordances (v0.3).
+	fs.BoolVar(&f.DryRun, "dry-run", false, "Resolve config/flags/engines and print the plan without searching")
+	fs.StringArrayVar(&f.Fields, "fields", nil, "Result field projection (repeatable; e.g. --fields url title snippet)")
+	fs.BoolVar(&f.Schema, "schema", false, "Emit the flag set as JSON for tool wrappers")
+	fs.BoolVar(&f.HelpJSON, "help-json", false, "Alias for --schema (emit the flag set as JSON)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -204,7 +214,7 @@ var helpTiers = []struct {
 	},
 	{
 		header: "Tier 3 — debug/internal (humans; an LLM should not need these)",
-		flags:  []string{"raw", "no-merge", "per-engine-timeout", "config", "verbose"},
+		flags:  []string{"raw", "no-merge", "per-engine-timeout", "config", "verbose", "dry-run", "fields", "schema", "help-json"},
 	},
 }
 

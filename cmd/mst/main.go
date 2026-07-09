@@ -115,6 +115,35 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 		return 2
 	}
 
+	// --schema / --help-json: emit the flag set as JSON for tool wrappers. Exit 0.
+	if flags.Schema || flags.HelpJSON {
+		if err := emitSchema(stdout, flags); err != nil {
+			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
+			return 2
+		}
+		return 0
+	}
+
+	// --dry-run: resolve config/flags/engines and print the plan without searching. Exit 0.
+	if flags.DryRun {
+		query, qerr := resolveQuery(flags, stdin)
+		if qerr != nil {
+			emitError(stderr, format.ErrCodeUsage, qerr.Error(), 2)
+			return 2
+		}
+		dry, err := resolveDryRun(flags, cfg, reg)
+		if err != nil {
+			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
+			return 2
+		}
+		dry.Query = query
+		if err := emitDryRun(stdout, dry); err != nil {
+			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
+			return 2
+		}
+		return 0
+	}
+
 	// --list-engines short-circuits before query resolution: render the full §4
 	// listing (name/enabled/keyed/key_present/weight/status) respecting --format.
 	if flags.ListEngines {
@@ -213,7 +242,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	exit := computeExit(len(results), runs, requireSet, flags.Strict)
 	emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
 
-	out, merr := format.Marshal(env, flags.Format)
+	// --fields: project result fields before rendering.
+	var out []byte
+	var merr error
+	if len(flags.Fields) > 0 {
+		if err := validateFields(flags.Fields); err != nil {
+			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
+			return 2
+		}
+		out, merr = MarshalResults(results, flags.Format, flags.Fields,
+			query, tookMs, p.limit, env.Engines, answer)
+	} else {
+		out, merr = format.Marshal(env, flags.Format)
+	}
 	if merr != nil {
 		emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
 		return 2
