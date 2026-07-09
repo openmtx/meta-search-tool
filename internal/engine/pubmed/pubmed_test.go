@@ -2,11 +2,13 @@ package pubmed
 
 import (
 	"context"
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +16,7 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/retry"
 )
 
-// minimalEsearchResponse is a valid esearch response with 2 PMIDs.
+// minimalEsearchResponse is a valid esearch XML response with 2 PMIDs.
 const minimalEsearchResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <eSearchResult>
   <Count>2</Count>
@@ -25,22 +27,15 @@ const minimalEsearchResponse = `<?xml version="1.0" encoding="UTF-8"?>
   </IdList>
 </eSearchResult>`
 
-// minimalESummaryResponse is a valid esummary response with 2 articles.
-const minimalESummaryResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<ArticleSet>
-  <Article>
-    <Id>32400405</Id>
-    <title>Attention Is All You Need</title>
-    <Source>Adv Neural Inf Process Syst</Source>
-    <PubDate>2017 Jul 10</PubDate>
-  </Article>
-  <Article>
-    <Id>17255268</Id>
-    <title>Deep Residual Learning for Image Recognition</title>
-    <Source>Proc IEEE Conf Comput Vis Pattern Recognit</Source>
-    <PubDate>2016 Jun</PubDate>
-  </Article>
-</ArticleSet>`
+// minimalESummaryResponse is a valid esummary JSON response (retmode=json) with
+// 2 articles. Per-PMID objects are keyed by UID under "result".
+const minimalESummaryResponse = `{
+  "result": {
+    "uids": ["32400405", "17255268"],
+    "32400405": {"uid":"32400405","title":"Attention Is All You Need","source":"Adv Neural Inf Process Syst","pubdate":"2017 Jul 10"},
+    "17255268": {"uid":"17255268","title":"Deep Residual Learning for Image Recognition","source":"Proc IEEE Conf Comput Vis Pattern Recognit","pubdate":"2016 Jun"}
+  }
+}`
 
 // emptyESearchResponse has no IDs.
 const emptyESearchResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -50,18 +45,11 @@ const emptyESearchResponse = `<?xml version="1.0" encoding="UTF-8"?>
   <IdList></IdList>
 </eSearchResult>`
 
-// emptyESummaryResponse has no articles.
-const emptyESummaryResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<ArticleSet></ArticleSet>`
-
-// malformedXML is not valid XML.
+// malformedXML is not valid XML (exercises the esearch decode error path).
 const malformedXML = `not xml at all <><`
 
-// fullRoundTripFixture simulates a complete esearch→esummary round trip.
-type fullRoundTripFixture struct {
-	esearchBody string
-	summaryBody string
-}
+// malformedJSON is not valid JSON (exercises the esummary decode error path).
+const malformedJSON = `not json at all <><`
 
 func TestDescriptor(t *testing.T) {
 	e := New()
@@ -84,51 +72,58 @@ func TestDescriptor(t *testing.T) {
 }
 
 func TestParseResults(t *testing.T) {
-	var resp eSummaryResult
-	if err := xml.Unmarshal([]byte(minimalESummaryResponse), &resp); err != nil {
-		t.Fatalf("failed to parse fixture: %v", err)
+	docs := []esummaryDoc{
+		{Uid: "32400405", Title: "Attention Is All You Need", Source: "Adv Neural Inf Process Syst", PubDate: "2017 Jul 10"},
+		{Uid: "17255268", Title: "Deep Residual Learning for Image Recognition", Source: "Proc IEEE Conf Comput Vis Pattern Recognit", PubDate: "2016 Jun"},
 	}
-
-	results, err := parseResults(resp)
+	results, err := parseResults(docs)
 	if err != nil {
 		t.Fatalf("parseResults error: %v", err)
 	}
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-
 	want := []engine.Result{
-		{
-			Title:   "Attention Is All You Need",
-			URL:     "https://pubmed.ncbi.nlm.nih.gov/32400405/",
-			Snippet: "Adv Neural Inf Process Syst. 2017 Jul 10",
-		},
-		{
-			Title:   "Deep Residual Learning for Image Recognition",
-			URL:     "https://pubmed.ncbi.nlm.nih.gov/17255268/",
-			Snippet: "Proc IEEE Conf Comput Vis Pattern Recognit. 2016 Jun",
-		},
+		{Title: "Attention Is All You Need", URL: "https://pubmed.ncbi.nlm.nih.gov/32400405/", Snippet: "Adv Neural Inf Process Syst. 2017 Jul 10"},
+		{Title: "Deep Residual Learning for Image Recognition", URL: "https://pubmed.ncbi.nlm.nih.gov/17255268/", Snippet: "Proc IEEE Conf Comput Vis Pattern Recognit. 2016 Jun"},
 	}
-
 	for i, w := range want {
 		if results[i].Title != w.Title {
 			t.Errorf("[%d] Title = %q, want %q", i, results[i].Title, w.Title)
 		}
 		if results[i].URL != w.URL {
-			t.Errorf("[%d] URL = %q, want %q", i, results[i].URL, w.Title)
+			t.Errorf("[%d] URL = %q, want %q", i, results[i].URL, w.URL)
 		}
 		if results[i].Snippet != w.Snippet {
-			t.Errorf("[%d] Snippet = %q, want %q", i, results[i].Snippet, w.Title)
+			t.Errorf("[%d] Snippet = %q, want %q", i, results[i].Snippet, w.Snippet)
 		}
 	}
 }
 
-func TestParseResults_Empty(t *testing.T) {
-	var resp eSummaryResult
-	if err := xml.Unmarshal([]byte(emptyESummaryResponse), &resp); err != nil {
-		t.Fatalf("failed to parse fixture: %v", err)
+// TestEsummaryResponse_Docs verifies the esummary JSON schema decodes into
+// ordered docs (the live retmode=json shape).
+func TestEsummaryResponse_Docs(t *testing.T) {
+	var resp esummaryResponse
+	if err := json.Unmarshal([]byte(minimalESummaryResponse), &resp); err != nil {
+		t.Fatalf("decode error: %v", err)
 	}
-	results, err := parseResults(resp)
+	docs, err := resp.docs()
+	if err != nil {
+		t.Fatalf("docs error: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("got %d docs, want 2", len(docs))
+	}
+	if docs[0].Uid != "32400405" || docs[0].Title != "Attention Is All You Need" {
+		t.Errorf("docs[0] = %+v", docs[0])
+	}
+	if docs[1].Source != "Proc IEEE Conf Comput Vis Pattern Recognit" {
+		t.Errorf("docs[1].Source = %q", docs[1].Source)
+	}
+}
+
+func TestParseResults_Empty(t *testing.T) {
+	results, err := parseResults(nil)
 	if err != nil {
 		t.Fatalf("parseResults error: %v", err)
 	}
@@ -138,13 +133,7 @@ func TestParseResults_Empty(t *testing.T) {
 }
 
 func TestParseResults_MissingId(t *testing.T) {
-	// Entry with no Id.
-	resp := eSummaryResult{
-		Articles: []article{
-			{Title: "No ID Article"},
-		},
-	}
-	results, err := parseResults(resp)
+	results, err := parseResults([]esummaryDoc{{Title: "No ID Article"}})
 	if err != nil {
 		t.Fatalf("parseResults error: %v", err)
 	}
@@ -154,13 +143,7 @@ func TestParseResults_MissingId(t *testing.T) {
 }
 
 func TestParseResults_MissingTitle(t *testing.T) {
-	// Entry with no Title.
-	resp := eSummaryResult{
-		Articles: []article{
-			{Id: "12345"},
-		},
-	}
-	results, err := parseResults(resp)
+	results, err := parseResults([]esummaryDoc{{Uid: "12345"}})
 	if err != nil {
 		t.Fatalf("parseResults error: %v", err)
 	}
@@ -169,11 +152,10 @@ func TestParseResults_MissingTitle(t *testing.T) {
 	}
 }
 
-func TestParseResults_MalformedXML(t *testing.T) {
-	var resp eSummaryResult
-	err := xml.Unmarshal([]byte(malformedXML), &resp)
-	if err == nil {
-		t.Fatal("expected error for malformed XML")
+func TestParseResults_MalformedJSON(t *testing.T) {
+	var resp esummaryResponse
+	if err := json.Unmarshal([]byte(malformedJSON), &resp); err == nil {
+		t.Fatal("expected error for malformed JSON")
 	}
 }
 
@@ -183,47 +165,24 @@ func TestSearch_Httptest(t *testing.T) {
 	orig := apiBase
 	defer func() { apiBase = orig }()
 
-	count := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count++
-		switch count {
-		case 1:
-			// esearch call.
-			if r.Method != http.MethodGet {
-				t.Errorf("esearch method = %s, want GET", r.Method)
-			}
-			parsed, err := url.Parse(r.URL.String())
-			if err != nil {
-				t.Fatalf("failed to parse request URL: %v", err)
-			}
-			if parsed.Path != "/esearch.fcgi" {
-				t.Errorf("esearch path = %s, want /esearch.fcgi", parsed.Path)
-			}
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		switch r.URL.Path {
+		case "/entrez/eutils/esearch.fcgi":
 			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(minimalEsearchResponse))
-		case 2:
-			// esummary call.
-			if r.Method != http.MethodGet {
-				t.Errorf("esummary method = %s, want GET", r.Method)
-			}
-			parsed, err := url.Parse(r.URL.String())
-			if err != nil {
-				t.Fatalf("failed to parse request URL: %v", err)
-			}
-			if parsed.Path != "/esummary.fcgi" {
-				t.Errorf("esummary path = %s, want /esummary.fcgi", parsed.Path)
-			}
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusOK)
+		case "/entrez/eutils/esummary.fcgi":
+			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(minimalESummaryResponse))
 		default:
-			t.Errorf("unexpected request #%d", count)
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/entrez/eutils"
+	apiBase = ts.URL // host only; buildURL appends /entrez/eutils/...
 
 	e := New()
 	results, err := e.Search(context.Background(), "transformer attention", engine.Options{Limit: 10})
@@ -233,15 +192,15 @@ func TestSearch_Httptest(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-	if count != 2 {
-		t.Errorf("got %d requests, want 2 (esearch + esummary)", count)
+	if results[0].Title != "Attention Is All You Need" {
+		t.Errorf("result[0] title = %q", results[0].Title)
 	}
 }
 
 func TestSearch_ContextCancelled(t *testing.T) {
 	e := New()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	cancel()
 	_, err := e.Search(ctx, "transformer", engine.Options{Limit: 10})
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
@@ -254,7 +213,6 @@ func TestSearch_HTTPError(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte("502 Bad Gateway"))
 	}))
 	defer ts.Close()
 
@@ -274,16 +232,10 @@ func TestSearch_MalformedResponse(t *testing.T) {
 	orig := apiBase
 	defer func() { apiBase = orig }()
 
-	count := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count++
+		// Serve malformed XML to esearch → decode error.
 		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		if count == 1 {
-			w.Write([]byte(malformedXML))
-		} else {
-			w.Write([]byte(malformedXML))
-		}
+		w.Write([]byte(malformedXML))
 	}))
 	defer ts.Close()
 
@@ -305,7 +257,6 @@ func TestSearch_EsearchReturnsEmpty(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(emptyESearchResponse))
 	}))
 	defer ts.Close()
@@ -326,33 +277,15 @@ func TestSearch_EsearchReturnsEmpty(t *testing.T) {
 
 func TestBuildSearchURL(t *testing.T) {
 	tests := []struct {
-		name      string
-		q         string
-		limit     int
-		wantQuery string
-		wantMax   int
+		name     string
+		q        string
+		limit    int
+		wantTerm string
+		wantMax  int
 	}{
-		{
-			name:      "normal query",
-			q:         "transformer attention",
-			limit:     10,
-			wantQuery: "transformer attention",
-			wantMax:   10,
-		},
-		{
-			name:      "limit capped at 10000",
-			q:         "quantum computing",
-			limit:     50000,
-			wantQuery: "quantum computing",
-			wantMax:   10000,
-		},
-		{
-			name:      "limit floored at 1",
-			q:         "deep learning",
-			limit:     0,
-			wantQuery: "deep learning",
-			wantMax:   1,
-		},
+		{"normal query", "transformer attention", 10, "transformer attention", 10},
+		{"limit capped at 10000", "quantum computing", 50000, "quantum computing", 10000},
+		{"limit floored at 1", "deep learning", 0, "deep learning", 1},
 	}
 
 	for _, tt := range tests {
@@ -363,29 +296,24 @@ func TestBuildSearchURL(t *testing.T) {
 			}
 			parsed, err := url.Parse(u)
 			if err != nil {
-				t.Fatalf("failed to parse result URL: %v", err)
+				t.Fatalf("parse URL: %v", err)
 			}
-			if parsed.Path != "/esearch.fcgi" {
-				t.Errorf("path = %s, want /esearch.fcgi", parsed.Path)
+			if parsed.Path != "/entrez/eutils/esearch.fcgi" {
+				t.Errorf("path = %s, want /entrez/eutils/esearch.fcgi", parsed.Path)
 			}
 			q := parsed.Query()
-			if q.Get("term") != tt.wantQuery {
-				t.Errorf("term = %q, want %q", q.Get("term"), tt.wantQuery)
+			if q.Get("term") != tt.wantTerm {
+				t.Errorf("term = %q, want %q", q.Get("term"), tt.wantTerm)
 			}
 			if q.Get("db") != "pubmed" {
 				t.Errorf("db = %q, want pubmed", q.Get("db"))
 			}
-			if q.Get("retmax") != "" {
-				var max int
-				_, err := fmt.Sscanf(q.Get("retmax"), "%d", &max)
-				if err != nil {
-					t.Fatalf("invalid retmax: %v", err)
-				}
-				if max != tt.wantMax {
-					t.Errorf("retmax = %d, want %d", max, tt.wantMax)
-				}
-			} else {
-				t.Error("retmax is empty")
+			var max int
+			if _, err := fmt.Sscanf(q.Get("retmax"), "%d", &max); err != nil {
+				t.Fatalf("invalid retmax: %v", err)
+			}
+			if max != tt.wantMax {
+				t.Errorf("retmax = %d, want %d", max, tt.wantMax)
 			}
 		})
 	}
@@ -398,10 +326,10 @@ func TestBuildSummaryURL(t *testing.T) {
 	}
 	parsed, err := url.Parse(u)
 	if err != nil {
-		t.Fatalf("failed to parse result URL: %v", err)
+		t.Fatalf("parse URL: %v", err)
 	}
-	if parsed.Path != "/esummary.fcgi" {
-		t.Errorf("path = %s, want /esummary.fcgi", parsed.Path)
+	if parsed.Path != "/entrez/eutils/esummary.fcgi" {
+		t.Errorf("path = %s, want /entrez/eutils/esummary.fcgi", parsed.Path)
 	}
 	q := parsed.Query()
 	if q.Get("db") != "pubmed" {
@@ -410,55 +338,52 @@ func TestBuildSummaryURL(t *testing.T) {
 	if q.Get("id") != "32400405,17255268" {
 		t.Errorf("id = %q, want 32400405,17255268", q.Get("id"))
 	}
+	if q.Get("retmode") != "json" {
+		t.Errorf("retmode = %q, want json", q.Get("retmode"))
+	}
 }
 
 // --- Retry tests (shared policy via internal/engine/retry) -------------------
 
-func fastRetry(t *testing.T) func() {
+func fastRetry(t *testing.T) {
 	t.Helper()
-	retry.SetBackoffOverride(func(attempt int) time.Duration {
-		return 10 * time.Millisecond // fast for tests
-	})
-	retry.SetJitterSource(nil) // deterministic
-	return func() { retry.SetBackoffOverride(nil) }
+	retry.SetBackoffOverride(func(int) time.Duration { return 0 })
+	retry.SetJitterSource(func(time.Duration) time.Duration { return 0 })
 }
 
 func TestSearch_Retry_429SucceedsOnRetry(t *testing.T) {
-	defer fastRetry(t)()
+	fastRetry(t)
 
 	orig := apiBase
 	defer func() { apiBase = orig }()
 
-	count := 0
+	esearchHits := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count++
-		switch count {
-		case 1:
-			// First esearch call → 429.
-			w.WriteHeader(http.StatusTooManyRequests)
-		case 2:
-			// Second attempt: esearch succeeds, serve esummary response.
+		switch r.URL.Path {
+		case "/entrez/eutils/esearch.fcgi":
+			esearchHits++
+			if esearchHits == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
 			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(minimalEsearchResponse))
-		default:
-			// Subsequent calls are for esummary.
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusOK)
+		case "/entrez/eutils/esummary.fcgi":
+			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(minimalESummaryResponse))
 		}
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/entrez/eutils"
+	apiBase = ts.URL
 
 	e := New()
 	results, err := e.Search(context.Background(), "transformer", engine.Options{Limit: 10})
 	if err != nil {
 		t.Fatalf("Search error after retry: %v", err)
 	}
-	if count < 2 {
-		t.Errorf("got %d requests, want at least 2 (initial + 1 retry)", count)
+	if esearchHits != 2 {
+		t.Errorf("esearch hits = %d, want 2 (initial + retry)", esearchHits)
 	}
 	if len(results) != 2 {
 		t.Errorf("got %d results, want 2", len(results))
@@ -466,7 +391,7 @@ func TestSearch_Retry_429SucceedsOnRetry(t *testing.T) {
 }
 
 func TestSearch_Retry_Exhausted(t *testing.T) {
-	defer fastRetry(t)()
+	fastRetry(t)
 
 	orig := apiBase
 	defer func() { apiBase = orig }()
@@ -490,5 +415,37 @@ func TestSearch_Retry_Exhausted(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("got %d requests, want 3 (initial + 2 retries)", count)
+	}
+}
+
+// --- Live integration test (§14, MST_ITEST=1) -------------------------------
+
+// TestSearch_Live verifies the engine against the real NCBI E-utilities
+// endpoints — confirming the esearch/esummary paths + the esummary JSON schema.
+// Skipped unless MST_ITEST=1.
+func TestSearch_Live(t *testing.T) {
+	if os.Getenv("MST_ITEST") != "1" {
+		t.Skip("skipping live test; set MST_ITEST=1 to hit eutils.ncbi.nlm.nih.gov")
+	}
+	e := New()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	results, err := e.Search(ctx, "cholesterol longevity", engine.Options{Limit: 5})
+	if err != nil {
+		t.Fatalf("live pubmed search failed (endpoint/schema may have drifted): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("live pubmed search returned 0 results")
+	}
+	t.Logf("pubmed live returned %d results; first: %q <%s> — %s",
+		len(results), results[0].Title, results[0].URL, results[0].Snippet)
+	for _, r := range results {
+		if !strings.HasPrefix(r.URL, "https://pubmed.ncbi.nlm.nih.gov/") {
+			t.Errorf("unexpected result URL: %s", r.URL)
+		}
+		if r.Title == "" {
+			t.Errorf("empty title: %+v", r)
+		}
 	}
 }

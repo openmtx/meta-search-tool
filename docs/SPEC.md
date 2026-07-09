@@ -379,7 +379,7 @@ engines:
   brave:        { weight: 2.0, enabled: true,  api_key_env: BRAVE_API_KEY, timeout: 4s }
   wikipedia:    { weight: 1.5, enabled: true,  timeout: 3s }
   mojeek:       { weight: 1.3, enabled: true,  timeout: 4s }
-  ddg:          { weight: 0.5, enabled: false, timeout: 3s }   # fragile scrape; opt-in
+  ddg:          { weight: 1.0, enabled: false, timeout: 3s }   # scrape (SearXNG mechanism); off by default
   google:       { weight: 1.0, enabled: false, api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }
   bing:         { weight: 1.0, enabled: false, api_key_env: BING_API_KEY }
   tavily:       { weight: 1.2, enabled: false, api_key_env: TAVILY_API_KEY }

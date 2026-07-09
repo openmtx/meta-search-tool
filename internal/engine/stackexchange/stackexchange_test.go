@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,8 +185,8 @@ func TestSearch_Httptest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to parse request URL: %v", err)
 		}
-		if parsed.Path != "/search/advanced" {
-			t.Errorf("path = %s, want /search/advanced", parsed.Path)
+		if parsed.Path != "/2.3/search/advanced" {
+			t.Errorf("path = %s, want /2.3/search/advanced", parsed.Path)
 		}
 		ua := r.Header.Get("User-Agent")
 		if ua == "" {
@@ -196,7 +198,7 @@ func TestSearch_Httptest(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/2"
+	apiBase = ts.URL
 
 	e := New()
 	results, err := e.Search(context.Background(), "go goroutines", engine.Options{Limit: 10})
@@ -329,8 +331,8 @@ func TestBuildRequestURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse result URL: %v", err)
 			}
-			// The path is relative to apiBase; default base includes "/2".
-			wantPath := "/search/advanced"
+			// buildRequestURL appends the full "/2.3/search/advanced" path to the host.
+			wantPath := "/2.3/search/advanced"
 			if parsed.Path != wantPath {
 				t.Errorf("path = %s, want %s", parsed.Path, wantPath)
 			}
@@ -347,17 +349,17 @@ func TestBuildRequestURL(t *testing.T) {
 			if q.Get("sort") != "relevance" {
 				t.Errorf("sort = %q, want relevance", q.Get("sort"))
 			}
-			if q.Get("maxcount") != "" {
+			if q.Get("pagesize") != "" {
 				var max int
-				_, err := fmt.Sscanf(q.Get("maxcount"), "%d", &max)
+				_, err := fmt.Sscanf(q.Get("pagesize"), "%d", &max)
 				if err != nil {
-					t.Fatalf("invalid maxcount: %v", err)
+					t.Fatalf("invalid pagesize: %v", err)
 				}
 				if max != tt.wantMax {
-					t.Errorf("maxcount = %d, want %d", max, tt.wantMax)
+					t.Errorf("pagesize = %d, want %d", max, tt.wantMax)
 				}
 			} else {
-				t.Error("maxcount is empty")
+				t.Error("pagesize is empty")
 			}
 		})
 	}
@@ -393,7 +395,7 @@ func TestSearch_Retry_429SucceedsOnRetry(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	apiBase = ts.URL + "/2"
+	apiBase = ts.URL
 
 	e := New()
 	results, err := e.Search(context.Background(), "goroutines", engine.Options{Limit: 10})
@@ -433,5 +435,37 @@ func TestSearch_Retry_Exhausted(t *testing.T) {
 	}
 	if count != 3 {
 		t.Errorf("got %d requests, want 3 (initial + 2 retries)", count)
+	}
+}
+
+// --- Live integration test (§14, MST_ITEST=1) -------------------------------
+
+// TestSearch_Live verifies the engine against the real Stack Exchange API —
+// confirming the /2.3/search/advanced path, the "withbody" filter, and pagesize.
+// Skipped unless MST_ITEST=1.
+func TestSearch_Live(t *testing.T) {
+	if os.Getenv("MST_ITEST") != "1" {
+		t.Skip("skipping live test; set MST_ITEST=1 to hit api.stackexchange.com")
+	}
+	e := New()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	results, err := e.Search(ctx, "goroutines", engine.Options{Limit: 5})
+	if err != nil {
+		t.Fatalf("live stackexchange search failed (endpoint/schema may have drifted): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("live stackexchange search returned 0 results")
+	}
+	t.Logf("stackexchange live returned %d results; first: %q <%s>",
+		len(results), results[0].Title, results[0].URL)
+	for _, r := range results {
+		if !strings.HasPrefix(r.URL, "https://stackoverflow.com/") {
+			t.Errorf("unexpected result URL: %s", r.URL)
+		}
+		if r.Title == "" {
+			t.Errorf("empty title: %+v", r)
+		}
 	}
 }

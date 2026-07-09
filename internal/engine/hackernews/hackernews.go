@@ -21,8 +21,10 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/retry"
 )
 
-// apiBase is the Hacker News Algolia API base URL. Tests override it via SetAPIBase.
-var apiBase = "https://hn.algolia.com/api/v1"
+// apiBase is the HN Algolia site origin. The full API path is appended in
+// buildRequestURL (base.Path = "/api/v1/search") so tests can repoint apiBase
+// at a local httptest origin and the request still carries the correct path.
+var apiBase = "https://hn.algolia.com"
 
 // userAgent is the HTTP User-Agent sent to HN Algolia (§12).
 const userAgent = "mst/dev"
@@ -133,7 +135,7 @@ func buildRequestURL(q string, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base.Path = "/search"
+	base.Path = "/api/v1/search"
 	params := base.Query()
 	params.Set("query", q)
 	params.Set("tags", "story")
