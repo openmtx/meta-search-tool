@@ -55,6 +55,7 @@ func (*wikipedia) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.5,
 		Enabled:       true,
+		Category:      "reference",
 	}
 }
 

@@ -60,6 +60,7 @@ func (*pubmed) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.2,
 		Enabled:       true,
+		Category:      "academic",
 	}
 }
 

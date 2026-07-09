@@ -132,11 +132,63 @@ func TestStatusString(t *testing.T) {
 
 // mockEngine is a minimal engine implementation for testing.
 type mockEngine struct {
-	name string
+	name     string
+	category string
+	keyed    bool
 }
 
-func (m *mockEngine) Name() string           { return m.name }
-func (m *mockEngine) Descriptor() EngineInfo { return EngineInfo{Name: m.name} }
+func (m *mockEngine) Name() string { return m.name }
+func (m *mockEngine) Descriptor() EngineInfo {
+	return EngineInfo{Name: m.name, Category: m.category, Keyed: m.keyed}
+}
 func (m *mockEngine) Search(ctx context.Context, q string, opts Options) ([]Result, error) {
 	return nil, nil
+}
+
+func TestRegistry_ExpandNames(t *testing.T) {
+	reg := NewRegistry()
+	for _, e := range []*mockEngine{
+		{name: "e1", category: "general"},              // keyless
+		{name: "e2", category: "general", keyed: true}, // keyed
+		{name: "e3", category: "academic"},             // keyless
+		{name: "e4", category: "academic"},             // keyless
+		{name: "e5", category: "", keyed: true},        // no category, keyed
+	} {
+		if err := reg.Register(e); err != nil {
+			t.Fatalf("Register(%s): %v", e.name, err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"engine name passes through", []string{"e1"}, []string{"e1"}},
+		{"category expands", []string{"academic"}, []string{"e3", "e4"}},
+		{"empty category (no match)", []string{""}, []string{""}},
+		{"unknown name passes through", []string{"nonexistent"}, []string{"nonexistent"}},
+		{"all alias", []string{"all"}, []string{"e1", "e2", "e3", "e4", "e5"}},
+		{"free alias (keyless only)", []string{"free"}, []string{"e1", "e3", "e4"}},
+		{"keyed alias (keyed only)", []string{"keyed"}, []string{"e2", "e5"}},
+		{"mixed category + engine", []string{"general", "e3"}, []string{"e1", "e2", "e3"}},
+		{"dedup: engine overlaps its category", []string{"academic", "e3"}, []string{"e3", "e4"}},
+		{"dedup: engine in multiple inputs", []string{"e1", "e1"}, []string{"e1"}},
+		{"category + free does not dup keyless", []string{"academic", "free"}, []string{"e3", "e4", "e1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reg.ExpandNames(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ExpandNames(%v) = %v (len=%d), want %v (len=%d)",
+					tt.in, got, len(got), tt.want, len(tt.want))
+			}
+			for i, w := range tt.want {
+				if got[i] != w {
+					t.Errorf("ExpandNames(%v)[%d] = %q, want %q", tt.in, i, got[i], w)
+				}
+			}
+		})
+	}
 }

@@ -34,6 +34,9 @@ const maxPages = 10
 // page signals the last page (stop paginating).
 const resultsPerPage = 10
 
+// ScrapeBase returns the current scrape base URL (for test restore).
+func ScrapeBase() string { return scrapeBase }
+
 // SetScrapeBase overrides the scrape base URL for testing. Callers must restore
 // the original value after the test (typically via defer).
 func SetScrapeBase(base string) { scrapeBase = base }
@@ -56,6 +59,7 @@ func (*mojeek) Descriptor() engine.EngineInfo {
 		KeyEnv:        "",
 		DefaultWeight: 1.3,
 		Enabled:       true,
+		Category:      "general",
 	}
 }
 
