@@ -6,27 +6,58 @@ description: >-
   emits JSON. Use for current web info, facts, docs, or URLs — not for
   reading page bodies (call a fetch tool on returned URLs).
 license: Apache-2.0
-compatibility: Requires `mst` on PATH. Get it from GitHub Releases (https://github.com/openmtx/meta-search-tool/releases) or `go install github.com/openmtx/meta-search-tool/cmd/mst@latest` (needs Go).
+compatibility: Requires `mst` on PATH. The skill auto-detects and installs if missing.
 ---
 
 # web-search (mst)
 
 ## Setup
 
-`mst` must be on PATH. The skill does not install it — obtain it yourself:
+Before running any search, the skill follows this flow:
 
-- **Prebuilt binary (no Go needed):** download from
-  [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases) —
-  pick the archive for your OS/arch (`linux`/`darwin`/`windows` ×
-  `amd64`/`arm64`), extract, and put `mst` on your PATH.
-- **From source (needs Go):**
-  `go install github.com/openmtx/meta-search-tool/cmd/mst@latest`
+1. **Try running `mst`.** If it works, proceed.
+2. **If not on PATH**, download and install a prebuilt binary from
+   [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases) using the one-shot script below (discovers the exact asset name via the GitHub API, so no guessing about version prefixes or extraction paths):
 
-Verify:
-```bash
-mst --version        # installed and on PATH
-mst --list-engines   # engines, status, effective weights
-```
+   ```bash
+   # Detect architecture and OS
+   ARCH=$(uname -m)
+   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+   # Map uname outputs to GitHub release names
+   case "$ARCH" in
+     x86_64)  ARCH="amd64" ;;
+     aarch64|arm64) ARCH="arm64" ;;
+   esac
+
+   # Find the correct asset name from the latest release via the GitHub API
+   ASSET=$(curl -fsSL "https://api.github.com/repos/openmtx/meta-search-tool/releases/latest" \
+     | grep '"name":' | grep "${OS}-${ARCH}" | head -1 \
+     | sed 's/.*"\(mst-[^\"]*\)".*/\1/')
+
+   if [ -z "$ASSET" ]; then
+     echo "ERROR: No release asset found for ${OS}-${ARCH}" >&2
+     exit 1
+   fi
+
+   # Download and install in one shot to ~/.local/bin (already on PATH)
+   INSTALL_DIR="$HOME/.local/bin"
+   mkdir -p "$INSTALL_DIR"
+   TMPDIR=$(mktemp -d)
+   curl -fsSL "https://github.com/openmtx/meta-search-tool/releases/latest/download/${ASSET}" -o "${TMPDIR}/release.tar.gz"
+   tar xzf "${TMPDIR}/release.tar.gz" -C "${TMPDIR}"
+   # The archive contains a subdirectory (mst-vX.Y.Z-<os>-<arch>/mst) — find the binary
+   BINARY=$(find "${TMPDIR}" -maxdepth 2 -type f -name 'mst' | head -1)
+   mv "$BINARY" "${INSTALL_DIR}/mst"
+   chmod +x "${INSTALL_DIR}/mst"
+   rm -rf "${TMPDIR}"
+   ```
+
+3. **Verify**:
+   ```bash
+   mst --version        # installed and on PATH
+   mst --list-engines   # engines, status, effective weights
+   ```
 
 A keyed engine without its env var (e.g. `BRAVE_API_KEY`) is auto-skipped,
 not an error — unless named in `--require`.

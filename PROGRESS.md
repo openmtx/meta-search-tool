@@ -1232,3 +1232,65 @@ compat). Google's public CSE token mode works keylessly via the built-in CX
 - `docs/SPEC.md` (category table, config example, §17.3)
 - `DECISIONS.md` (decision entry)
 - `PROGRESS.md` (this entry)
+
+---
+
+## 2026-07-09 — Sprint D.2.1: v0.3 skill-affordance flags
+
+**What:** Implemented three Tier 3 skill-affordance CLI flags defined in spec §16:
+`--dry-run`, `--fields`, and `--schema`/`--help-json`.
+
+**--dry-run:** `cmd/mst/dryrun.go` — resolves config/flags/engines without searching,
+emits a JSON plan showing engine statuses, weights, timeouts, global timeout,
+fetch limit, RRF k, and limit/offset. Exit 0 on success, 2 on parse error or unknown
+engine.
+
+**--fields:** `cmd/mst/skill.go` — validates field names (`rank`, `title`, `url`,
+`source`, `snippet`, `score`, `engines`), projects results into `[]map[string]any`,
+and renders in the requested format (json→projected envelope, jsonl→per-result JSON,
+text/table→columnar). Exit 2 on invalid/duplicate field.
+
+**--schema / --help-json:** `cmd/mst/skill.go` — emits all CLI flags as a JSON schema
+with name, type, default, and help text. Exit 0. `--help-json` is an alias for
+`--schema`.
+
+**Integration:** `cmd/mst/main.go` — added early-exit handlers for `--schema`,
+`--help-json`, and `--dry-run`; wired `validateFields` before `MarshalResults`;
+used `MarshalResults` for the standard search path when `--fields` is specified.
+Updated `internal/cli/cli.go` help tiers to include new flags in Tier 3.
+
+**Tests (cmd/mst/skill_test.go):** 18 new tests covering:
+- `--schema` output structure and completeness (flag names present)
+- `--help-json` alias parity with `--schema`
+- `--dry-run` plan resolution, weight overrides, engine statuses
+- `--dry-run` unknown engine → exit 2, no query → exit 2
+- `--fields` JSON/text projection, invalid field → exit 2, duplicate → exit 2,
+  no projection → full output preserved
+- `validateFields`, `validField`, `projectResults` unit tests
+- `MarshalResults` for all formats, invalid format error
+- `rankFetchLimit`, `stringsJoin` helpers
+
+**Verification:**
+```
+$ go build ./...                          # clean
+$ go vet ./...                            # clean
+$ gofmt -l .                             # clean (no changes needed)
+$ go test -race -count=1 ./...           # 508+ tests, 0 failures
+```
+
+**Manual smoke tests:**
+```
+$ ./mst --schema "q"          → JSON schema with all flags ✓
+$ ./mst --help-json "q"       → identical to --schema ✓
+$ ./mst --dry-run "test"      → JSON plan with engine statuses ✓
+$ ./mst --fields url title -n 3 "q"  → projected results (only url+title) ✓
+$ ./mst --fields bogus "q"    → exit 2, error message ✓
+```
+
+**Files changed:**
+- `cmd/mst/dryrun.go` (new: dry-run plan resolver and emitter)
+- `cmd/mst/skill.go` (new: --fields projection, --schema emitter, helpers)
+- `cmd/mst/main.go` (integration: early exits for schema/dry-run, fields validation)
+- `internal/cli/cli.go` (help tier updates for new flags)
+- `cmd/mst/skill_test.go` (new: 18 tests for all three flags + helpers)
+- `PROGRESS.md` (this entry)

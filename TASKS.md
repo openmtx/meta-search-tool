@@ -38,8 +38,17 @@ Work proceeds tier by tier (A → B → C → D), tracking the roadmap (§16):
 > **v0.1 ships when** Tier A (foundation + engines) + `wikipedia` (Tier B) +
 > `ddg` (Tier C, off by default) + hardening are done (§16).
 
-> ### ▶ Now working on: Tier D, Stage 1 — Sprint D.1.2 (`include_answer`, `search_depth`)
-> _Updated 2026-07-09: All tiers complete; Stage 1 finished; next: Stage 2 hardening or release tagging._
+> ### ▶ Now working on: Sprint D.2.1 — v0.3 skill-affordance flags (`--dry-run`, `--fields`, `--schema`)
+> _Updated 2026-07-09: All tiers complete; Stage 1 finished._
+
+### Skill-affordance flags (v0.3, spec §16)  [→ v0.3]
+#### ✅ Sprint D.2.1 — `--dry-run`, `--fields`, `--schema`/`--help-json`   ▶ complete
+- [x] `cmd/mst/dryrun.go` — dry-run plan resolver + JSON emitter
+- [x] `cmd/mst/skill.go` — `--fields` validation/projection, `--schema` emitter
+- [x] `cmd/mst/main.go` — integration: early exits for schema/dry-run, fields validation
+- [x] `internal/cli/cli.go` — Tier 3 help tier updated
+- [x] `cmd/mst/skill_test.go` — 18 tests (schema parity, dry-run plan, field projection, validation)
+- [x] 508+ tests green (-race), clean build/vet/fmt
 
 ### Stage 0 — Core foundation (prerequisite for every engine)  [→ v0.1]
 #### Sprint A.0.1 — Scaffold + config + engine registry
@@ -225,7 +234,8 @@ results); full suite 341 tests green (-race). Single page only — see follow-up
 ---
 
 ## ✅ Tier D — AI-oriented — done (v0.3)
-Shipped: `tavily` with `include_answer` and `search_depth` options (Sprint D.1.2).
+Shipped: `tavily` with `include_answer` and `search_depth` options (Sprint D.1.2) +
+v0.3 skill-affordance flags (`--dry-run`, `--fields`, `--schema`) (Sprint D.2.1).
 
 ### Stage 1 — AI answer engines  [→ v0.3]
 #### ✅ Sprint D.1.1 — `tavily` (keyed API)   ▶ complete
