@@ -37,6 +37,3 @@ Thumbs.db
 
 # Research / investigation notes — learnings that inform implementation but aren't spec or code
 /docs/DDG-research.md
-
-# Reference implementations (SearXNG source, etc.) — cloned repos for design reference
-/ref/
