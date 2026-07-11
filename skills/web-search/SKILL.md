@@ -94,10 +94,10 @@ to reason about quality.
 
 ## Engines
 
-No `--engine` flag runs the **default-on set**: `brave` (skips without
-`BRAVE_API_KEY`), `ddg`, `wikipedia`, `arxiv`, `pubmed`, `stackexchange`.
-`--engine` selects a category or alias (compose with engine names; duplicates
-removed):
+No `--engine` flag runs the **default-on set** (general-web only): `ddg`, `google`, and `brave` (skips without `BRAVE_API_KEY`). Academic,
+reference, news, and q&a engines are NOT in the default run — select them with
+an explicit category alias (`--engine academic`, `--engine reference`, `--engine
+q&a`, `--engine all`). `--engine` composes with engine names; duplicates removed:
 
 | `--engine` | Engines |
 |------------|---------|
@@ -109,8 +109,9 @@ removed):
 | `free` | all keyless engines |
 | `all` | every registered engine |
 
-Off by default (opt-in via config or `-e`): `mojeek`, `google`, `bing`,
-`tavily`, `hackernews`, `grokipedia`. Keyed (auto-skip without their env var):
+Of the `general` engines, only `ddg`, `google`, and `brave` are on by default;
+`mojeek`, `bing`, and `tavily` are opt-in via config or `-e` (all other
+categories are opt-in too — see above). Keyed (auto-skip without their env var):
 `brave`, `bing`, `tavily`. Inspect live state with `mst --list-engines`.
 
 ```bash

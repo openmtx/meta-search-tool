@@ -178,20 +178,24 @@ func TestParse_Help_GroupedByTier(t *testing.T) {
 	// Ordering: each tier's flags must appear under their own header — a tier-1
 	// flag precedes the tier-2 header, a tier-3 flag follows it.
 	iEngine := strings.Index(s, "--engine")
+	iFields := strings.Index(s, "--fields")
 	iTier2 := strings.Index(s, "Tier 2")
 	iRaw := strings.Index(s, "--raw")
 	iTier3 := strings.Index(s, "Tier 3")
-	if iEngine < 0 || iTier2 < 0 || iRaw < 0 || iTier3 < 0 {
+	if iEngine < 0 || iFields < 0 || iTier2 < 0 || iRaw < 0 || iTier3 < 0 {
 		t.Fatalf("expected flags/headers not all found:\n%s", s)
 	}
 	if !(iEngine < iTier2) {
 		t.Errorf("tier-1 flag --engine (%d) must precede the Tier 2 header (%d)", iEngine, iTier2)
 	}
+	if !(iFields < iTier2) {
+		t.Errorf("tier-1 flag --fields (%d) must precede the Tier 2 header (%d)", iFields, iTier2)
+	}
 	if !(iTier3 < iRaw) {
 		t.Errorf("tier-3 flag --raw (%d) must follow the Tier 3 header (%d)", iRaw, iTier3)
 	}
 	// Every registered flag should still be documented somewhere.
-	for _, flag := range []string{"--query", "--engine", "--exclude", "--limit", "--format", "--weight",
+	for _, flag := range []string{"--query", "--engine", "--exclude", "--limit", "--format", "--fields", "--weight",
 		"--rrf-k", "--require", "--strict", "--timeout",
 		"--raw", "--no-merge", "--per-engine-timeout", "--config", "-v", "--verbose"} {
 		if !strings.Contains(s, flag) {

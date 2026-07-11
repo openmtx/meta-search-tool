@@ -80,6 +80,7 @@ cat query.txt | mst --stdin
 | `-n, --limit` | `10` | Max number of merged results to return. |
 | `--offset` | `0` | Skip the first N merged results (best-effort pagination; see below). |
 | `-f, --format` | `json` | Output format: `json` \| `jsonl` \| `text` \| `table`. |
+| `--fields` | — | Project result fields, **repeatable** (e.g. `--fields url title snippet`). Only the named fields are emitted per result, trimming context. Tier 1 (skill-facing). |
 | `--weight` | — | Per-run per-engine weight override, `ENGINE=FLOAT`; **repeatable** (e.g. `--weight brave=2.0 --weight ddg=0.5`). See "Weight semantics". |
 | `--rrf-k` | `60` | RRF smoothing constant; smaller → more top-heavy ranking. |
 | `--require` | — | Comma-separated engines that must run. If one cannot *start* (unknown name, disabled, or missing key) → exit `2`; if one runs but errors/times out → exit `3` (output still emitted). |
@@ -185,7 +186,8 @@ say "tier-1 only":
 
 - **Tier 1 — skill-facing (stable; the only flags a SKILL.md should document):**
   positional `--query`, `--stdin`, `-e/--engine`, `--exclude`, `-n/--limit`,
-  `--offset`, `-f/--format`, `--weight`, `--list-engines`, `--version`.
+  `--offset`, `-f/--format`, `--fields`, `--weight`, `--list-engines`,
+  `--version`.
 - **Tier 2 — tuning (documented, discouraged for routine skill use):**
   `--rrf-k`, `--require`, `--strict`, `--timeout`.
 - **Tier 3 — debug/internal (humans; an LLM should not need these):** `--raw`,

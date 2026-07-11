@@ -77,6 +77,7 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 
 	// Tier 1 — skill-facing (§4).
 	fs.StringVarP(&f.Format, "format", "f", "json", "Output format: json | jsonl | text | table")
+	fs.StringArrayVar(&f.Fields, "fields", nil, "Result field projection (repeatable; e.g. --fields url title snippet)")
 	fs.IntVarP(&f.Limit, "limit", "n", 10, "Max number of merged results to return")
 	fs.IntVar(&f.Offset, "offset", 0, "Skip the first N merged results (best-effort pagination)")
 	fs.BoolVar(&f.Stdin, "stdin", false, "Read query from stdin")
@@ -104,9 +105,10 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	fs.StringVar(&f.Config, "config", "", "Path to an explicit config file (overrides discovery)")
 	fs.CountVarP(&f.Verbose, "verbose", "v", "Verbosity level (-v = 1, -vv = 2)")
 
-	// Tier 3 — skill affordances (v0.3).
+	// Tier 3 — programmatic/inspection affordances (v0.3): --schema/--help-json
+	// emit the flag set as JSON for tool wrappers; --dry-run previews the plan.
+	// (--fields is skill-facing; registered with Tier 1 above.)
 	fs.BoolVar(&f.DryRun, "dry-run", false, "Resolve config/flags/engines and print the plan without searching")
-	fs.StringArrayVar(&f.Fields, "fields", nil, "Result field projection (repeatable; e.g. --fields url title snippet)")
 	fs.BoolVar(&f.Schema, "schema", false, "Emit the flag set as JSON for tool wrappers")
 	fs.BoolVar(&f.HelpJSON, "help-json", false, "Alias for --schema (emit the flag set as JSON)")
 
@@ -206,7 +208,7 @@ var helpTiers = []struct {
 }{
 	{
 		header: "Tier 1 — skill-facing (stable; the only flags a SKILL.md should document)",
-		flags:  []string{"query", "engine", "exclude", "limit", "offset", "format", "weight", "stdin", "list-engines", "version"},
+		flags:  []string{"query", "engine", "exclude", "limit", "offset", "format", "fields", "weight", "stdin", "list-engines", "version"},
 	},
 	{
 		header: "Tier 2 — tuning (documented, discouraged for routine skill use)",
@@ -214,7 +216,7 @@ var helpTiers = []struct {
 	},
 	{
 		header: "Tier 3 — debug/internal (humans; an LLM should not need these)",
-		flags:  []string{"raw", "no-merge", "per-engine-timeout", "config", "verbose", "dry-run", "fields", "schema", "help-json"},
+		flags:  []string{"raw", "no-merge", "per-engine-timeout", "config", "verbose", "dry-run", "schema", "help-json"},
 	},
 }
 
