@@ -92,10 +92,12 @@ mst --list-engines   # engines, status, effective weights
   (`--weight brave=2.0`) and tunable smoothing (`--rrf-k`).
 - **JSON by default** — every result carries `score` and the list of engines
   that contributed. Also supports JSONL, Text, and Table output.
-- **Agent Skill ready** — ships a ready-made
-  [Agent Skill](https://agentskills.io/) wrapping the stable flag set;
-  [`skills/web-search/SKILL.md`](./skills/web-search/SKILL.md). Install in
-  one command, no prompt engineering.
+- **Agent Skills ready** — ships ready-made
+  [Agent Skills](https://agentskills.io/) wrapping the stable flag set:
+  [`skills/web-search/SKILL.md`](./skills/web-search/SKILL.md) (search → URLs)
+  and [`skills/web-research/SKILL.md`](./skills/web-research/SKILL.md)
+  (search → page-body extraction via [`webclaw`](https://github.com/0xMassi/webclaw)).
+  Install in one command, no prompt engineering.
 - **Single binary** — download the right platform build from GitHub Releases
   and run. No Go toolchain, no runtime deps, no server.
 - **Engine categories** — `--engine academic`, `--engine free`, `--engine all`
