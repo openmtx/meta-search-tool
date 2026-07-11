@@ -21,9 +21,15 @@ then `webclaw` to extract clean, LLM-ready content from those pages.
 
 ## Prerequisites
 
-- **Binaries auto-install** to `~/.local/bin` on first use if missing:
-  `mst` from [openmtx/meta-search-tool](https://github.com/openmtx/meta-search-tool)
-  and `webclaw` from [0xMassi/webclaw](https://github.com/0xMassi/webclaw).
+- **Binaries auto-install, isolated per skill**, to `~/.cache/agent-skills/<skill>/bin/`
+  — *not* a shared PATH binary, so `web-search` and `web-research` never clash
+  over a single `mst` (each pins a compatible version). `mst` from
+  [openmtx/meta-search-tool](https://github.com/openmtx/meta-search-tool) and
+  `webclaw` from [0xMassi/webclaw](https://github.com/0xMassi/webclaw). The skill
+  resolves and SHA256-verifies the right release itself. See
+  [DEPENDENCIES.md](./DEPENDENCIES.md) for the versioning & cache convention
+  (and why an absolute cache path — not a skill-dir-local copy — is required
+  for cross-harness portability: opencode does not expose the skill directory).
 - **No key required by default.** `mst`'s default engines (`ddg`, `google`) and
   `webclaw`'s local extraction are keyless.
 - **Optional keys** (extend coverage, don't unlock the base path):
