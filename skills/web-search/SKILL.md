@@ -6,87 +6,65 @@ description: >-
   emits JSON. Use for current web info, facts, docs, or URLs — not for
   reading page bodies (call a fetch tool on returned URLs).
 license: Apache-2.0
-compatibility: Requires `mst` on PATH. The skill auto-detects and installs if missing.
+compatibility: Auto-installs a pinned `mst` to ~/.cache/agent-skills/web-search/bin/ (not PATH); no key required by default.
+metadata:
+  version: "1.0.0"
+  requires:
+    mst: ">=0.3,<1.0"
 ---
 
 # web-search (mst)
 
 ## Setup
 
-Before running any search, the skill follows this flow:
+`mst` is **not on PATH** — this skill keeps its own isolated copy at
+`~/.cache/agent-skills/web-search/bin/mst`, so it never clashes with another
+skill's `mst`. Install or verify it (downloads ~11 MB, SHA256-verified; pins an
+exact tested version — currently v0.3.2):
 
-1. **Try running `mst`.** If it works, proceed.
-2. **If not on PATH**, download and install a prebuilt binary from
-   [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases) using the one-shot script below (discovers the exact asset name via the GitHub API, so no guessing about version prefixes or extraction paths):
+```bash
+curl -fsSL https://raw.githubusercontent.com/openmtx/meta-search-tool/master/skills/web-search/scripts/setup.sh | bash
+```
 
-   ```bash
-   # Detect architecture and OS
-   ARCH=$(uname -m)
-   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+It prints the binary path and is a fast no-op if the pinned version is already
+cached. Then set a variable for the examples below:
 
-   # Map uname outputs to GitHub release names
-   case "$ARCH" in
-     x86_64)  ARCH="amd64" ;;
-     aarch64|arm64) ARCH="arm64" ;;
-   esac
-
-   # Find the correct asset name from the latest release via the GitHub API
-   ASSET=$(curl -fsSL "https://api.github.com/repos/openmtx/meta-search-tool/releases/latest" \
-     | grep '"name":' | grep "${OS}-${ARCH}" | head -1 \
-     | sed 's/.*"\(mst-[^\"]*\)".*/\1/')
-
-   if [ -z "$ASSET" ]; then
-     echo "ERROR: No release asset found for ${OS}-${ARCH}" >&2
-     exit 1
-   fi
-
-   # Download and install in one shot to ~/.local/bin (already on PATH)
-   INSTALL_DIR="$HOME/.local/bin"
-   mkdir -p "$INSTALL_DIR"
-   TMPDIR=$(mktemp -d)
-   curl -fsSL "https://github.com/openmtx/meta-search-tool/releases/latest/download/${ASSET}" -o "${TMPDIR}/release.tar.gz"
-   tar xzf "${TMPDIR}/release.tar.gz" -C "${TMPDIR}"
-   # The archive contains a subdirectory (mst-vX.Y.Z-<os>-<arch>/mst) — find the binary
-   BINARY=$(find "${TMPDIR}" -maxdepth 2 -type f -name 'mst' | head -1)
-   mv "$BINARY" "${INSTALL_DIR}/mst"
-   chmod +x "${INSTALL_DIR}/mst"
-   rm -rf "${TMPDIR}"
-   ```
-
-3. **Verify**:
-   ```bash
-   mst --version        # installed and on PATH
-   mst --list-engines   # engines, status, effective weights
-   ```
+```bash
+MST=~/.cache/agent-skills/web-search/bin/mst
+"$MST" --version       # e.g. mst v0.3.2
+"$MST" --list-engines  # engines, status, effective weights
+```
 
 A keyed engine without its env var (e.g. `BRAVE_API_KEY`) is auto-skipped,
 not an error — unless named in `--require`.
 
 ## Usage
 
+Examples assume `MST=~/.cache/agent-skills/web-search/bin/mst` (set in Setup).
+
 **Results only (cheap on context):**
 ```bash
-mst --format jsonl --limit 10 "<query>"
+"$MST" --format jsonl --limit 10 "<query>"
 ```
 
 **Full envelope (per-engine status + score):**
 ```bash
-mst --format json --limit 10 "<query>"
+"$MST" --format json --limit 10 "<query>"
 ```
 
 **Steer ranking per query:**
 ```bash
-mst --engine brave,wikipedia --weight brave=2.0 "<query>"
+"$MST" --engine brave,wikipedia --weight brave=2.0 "<query>"
 ```
 
 **Pagination (best-effort, stateless):**
 ```bash
-mst --limit 10 --offset 10 "<query>"
+"$MST" --limit 10 --offset 10 "<query>"
 ```
 
 **Read query from stdin:**
 ```bash
-printf '%s' "<long query>" | mst --stdin --format jsonl
+printf '%s' "<long query>" | "$MST" --stdin --format jsonl
 ```
 
 Use `jsonl` when you just need hits; use `json` when you want `score`/`engines[]`
@@ -112,12 +90,12 @@ q&a`, `--engine all`). `--engine` composes with engine names; duplicates removed
 Of the `general` engines, only `ddg`, `google`, and `brave` are on by default;
 `mojeek`, `bing`, and `tavily` are opt-in via config or `-e` (all other
 categories are opt-in too — see above). Keyed (auto-skip without their env var):
-`brave`, `bing`, `tavily`. Inspect live state with `mst --list-engines`.
+`brave`, `bing`, `tavily`. Inspect live state with `"$MST" --list-engines`.
 
 ```bash
-mst --engine academic "vision transformer 2025"
-mst --engine academic,brave "transformer attention"   # compose with general web
-mst --engine free "best espresso grinder"
+"$MST" --engine academic "vision transformer 2025"
+"$MST" --engine academic,brave "transformer attention"   # compose with general web
+"$MST" --engine free "best espresso grinder"
 ```
 
 ## Errors
