@@ -1,35 +1,24 @@
 # Agent Skills
 
-`mst` ships two ready-made [Agent Skills](https://agentskills.io/) that teach an
-AI agent how to search the web and read pages with the CLI. They are
-self-contained, auto-installing, and need **no API key** for the common path.
+`mst` ships a ready-made [Agent Skill](https://agentskills.io/) that teaches an
+AI agent how to search the web and read pages with the CLI. It is
+self-contained, auto-installing, and needs **no API key** for the common path.
 
 | Skill | Pipeline | Tools | Reach for it when… |
 |-------|----------|-------|--------------------|
-| **[web-search](./web-search/SKILL.md)** | meta-search → URLs / titles / snippets | `mst` | You need current web info, facts, docs, or URLs. |
-| **[web-research](./web-research/SKILL.md)** | meta-search → **page bodies** | `mst` + [`webclaw`](https://github.com/0xMassi/webclaw) | You're researching a topic and need to *read* the pages, not just list them. |
+| **[web-search](./web-search/SKILL.md)** | meta-search → URLs / titles / snippets → **optionally extract page bodies** | `mst` + [`webclaw`](https://github.com/0xMassi/webclaw) | You need current web info, facts, docs, URLs — and optionally want to read the full page content. |
 
-`web-research` builds on `web-search`: it runs `mst` to discover and rank URLs,
-then `webclaw` to extract clean, LLM-ready content from those pages.
-
-## Which one should I use?
-
-- **Just need links/answers fast?** → `web-search`. Cheap on context; returns
-  ranked URLs + snippets only.
-- **Need to actually read the sources?** → `web-research`. Two-step pipeline that
-  fetches and extracts the page content behind the URLs.
+Just need links and snippets? Call `mst` alone (cheap on context). Need to read
+the actual pages? Pipe through `webclaw` for clean, LLM-ready content.
 
 ## Prerequisites
 
-- **Binaries auto-install, isolated per skill**, to `~/.cache/agent-skills/<skill>/bin/`
-  — *not* a shared PATH binary, so `web-search` and `web-research` never clash
-  over a single `mst` (each pins a compatible version). `mst` from
-  [openmtx/meta-search-tool](https://github.com/openmtx/meta-search-tool) and
-  `webclaw` from [0xMassi/webclaw](https://github.com/0xMassi/webclaw). The skill
-  resolves and SHA256-verifies the right release itself. See
-  [DEPENDENCIES.md](./DEPENDENCIES.md) for the versioning & cache convention
-  (and why an absolute cache path — not a skill-dir-local copy — is required
-  for cross-harness portability: opencode does not expose the skill directory).
+- **Binaries auto-install** to `~/.local/bin/` (ensure it is on your `PATH`).
+  `mst` from [openmtx/meta-search-tool](https://github.com/openmtx/meta-search-tool)
+  and `webclaw` from [0xMassi/webclaw](https://github.com/0xMassi/webclaw). The
+  skill resolves and SHA256-verifies the right release itself. See
+  [DEPENDENCIES.md](./DEPENDENCIES.md) for the version pinning & verification
+  approach.
 - **No key required by default.** `mst`'s default engines (`ddg`, `google`) and
   `webclaw`'s local extraction are keyless.
 - **Optional keys** (extend coverage, don't unlock the base path):
@@ -39,10 +28,13 @@ then `webclaw` to extract clean, LLM-ready content from those pages.
 
 ---
 
-## web-search — discovery & ranking
+## web-search — discovery & optional page extraction
 
 Fan out to many engines concurrently, fuse results with tunable RRF ranking,
-emit JSON. Returns URLs/titles/snippets — **not** page bodies.
+emit JSON. Returns URLs/titles/snippets — optionally pipe through `webclaw` for
+full page content.
+
+### Just search (URLs/snippets only, cheap on context)
 
 ```bash
 # Cheapest: one result per line (jsonl)
@@ -70,11 +62,7 @@ mst --weight brave=2.0         "tokio"                     # boost an engine
 mst --format text --fields url --limit 10 "<query>"
 ```
 
----
-
-## web-research — search, then read
-
-The two-step pipeline: `mst` discovers URLs, `webclaw` extracts clean content.
+### Full research — search, then read page bodies
 
 ```bash
 # 1. Discover + rank URLs (bare URLs via field projection)
@@ -109,35 +97,33 @@ webclaw vertical github_repo https://github.com/rust-lang/rust --raw | jq '{star
 
 ---
 
-## Using these skills in an agent (pi)
+## Using this skill in an agent (pi)
 
-These follow the [Agent Skills](https://agentskills.io/) standard and work in
+This follows the [Agent Skills](https://agentskills.io/) standard and works in
 [pi](https://github.com/earendil-works/pi-coding-agent) and other compatible
 harnesses.
 
-**Progressive disclosure — low system-prompt cost.** Only each skill's
-`description` sits in the system prompt (~270 + ~433 chars; well under the
-1024-char cap). The full `SKILL.md` body is loaded on-demand only when a task
-matches.
+**Progressive disclosure — low system-prompt cost.** The skill's
+`description` (~275 chars) sits in the system prompt; the full `SKILL.md` body
+is loaded on-demand only when a task matches.
 
 **Install** (pi discovers any directory containing a `SKILL.md`):
 
 ```bash
 # Global (available everywhere)
-cp -r web-search web-research ~/.pi/agent/skills/
+cp -r web-search ~/.pi/agent/skills/
 
 # …or per-project
-mkdir -p .pi/skills && cp -r web-search web-research .pi/skills/
+mkdir -p .pi/skills && cp -r web-search .pi/skills/
 
 # …or one-off
-pi --skill ./web-search --skill ./web-research
+pi --skill ./web-search
 ```
 
 **Invoke** once installed:
 
 ```text
 /skill:web-search
-/skill:web-research
 ```
 
 …or simply describe the task — the agent loads the matching skill automatically.
