@@ -1,5 +1,7 @@
 # mst — Meta Search Tool
 
+[![Release](https://github.com/openmtx/meta-search-tool/actions/workflows/release.yml/badge.svg)](https://github.com/openmtx/meta-search-tool/actions/workflows/release.yml)
+
 A CLI meta-search tool designed for LLM harnesses. Fan out to many engines
 concurrently, get one merged JSON result with transparent scoring. No server,
 no setup.
