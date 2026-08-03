@@ -29,6 +29,20 @@ coverage.html
 .DS_Store
 Thumbs.db
 
+# Python extension build artifacts (the Cython source _mst.pyx IS committed;
+# the generated C / header / .so / bytecode are build outputs)
+python/build/
+__pycache__/
+*.pyc
+.pytest_cache/
+python/src/mst/_mst.c
+python/src/mst/_mst.h
+python/src/mst/_mst*.so
+
+# cgo module: stray binary from a plain `go build` (the c-shared artifact is
+# built into python/src/mst/ by the publish workflow)
+/cgo/cgo
+
 # Local working/process files — internal only, never shipped
 /AGENTS.md
 /TASKS.md

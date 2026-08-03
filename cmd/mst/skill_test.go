@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openmtx/meta-search-tool/internal/cgoapi"
 	"github.com/openmtx/meta-search-tool/internal/format"
 	"github.com/openmtx/meta-search-tool/internal/rank"
 )
@@ -64,7 +65,7 @@ func TestRun_DryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d; stderr=%s", code, errs)
 	}
-	var dry dryRunOutput
+	var dry cgoapi.DryRunOutput
 	if err := json.Unmarshal([]byte(out), &dry); err != nil {
 		t.Fatalf("parse dry-run: %v", err)
 	}
@@ -305,43 +306,6 @@ func TestMarshalResults_JsonlProjection(t *testing.T) {
 		}
 		if _, ok := m["url"]; !ok {
 			t.Error("line missing url field")
-		}
-	}
-}
-
-// === dryrun.go unit tests ===================================================
-
-func TestRankFetchLimit(t *testing.T) {
-	tests := []struct {
-		offset, limit, want int
-	}{
-		{0, 10, 30},
-		{0, 5, 20},
-		{5, 10, 45},
-		{10, 5, 45},
-	}
-	for _, tt := range tests {
-		got := rankFetchLimit(tt.offset, tt.limit)
-		if got != tt.want {
-			t.Errorf("rankFetchLimit(%d, %d) = %d, want %d", tt.offset, tt.limit, got, tt.want)
-		}
-	}
-}
-
-func TestStringsJoin(t *testing.T) {
-	tests := []struct {
-		input []string
-		sep   string
-		want  string
-	}{
-		{[]string{"a", "b", "c"}, ", ", "a, b, c"},
-		{[]string{"a"}, ", ", "a"},
-		{[]string{}, ", ", ""},
-	}
-	for _, tt := range tests {
-		got := stringsJoin(tt.input, tt.sep)
-		if got != tt.want {
-			t.Errorf("stringsJoin(%v, %q) = %q, want %q", tt.input, tt.sep, got, tt.want)
 		}
 	}
 }
