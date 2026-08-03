@@ -67,6 +67,21 @@ def build_cgo():
     env = os.environ.copy()
     env["CGO_ENABLED"] = "1"
 
+    # On Windows, the default CC is MSYS2 MinGW which produces ELF binaries.
+    # Force Go to use the MSVC toolchain so the CGO lib is a PE DLL that
+    # link.exe can consume. Set CC=cl and pass the VS include path via
+    # CGO_CFLAGS.
+    if _platform.system() == "Windows":
+        env["CC"] = "cl"
+        # Find MSVC include dir: scan for the first VC/Tools/MSVC/*/include
+        vs_base = Path(env.get("PROGRAMFILES", r"C:\Program Files"))
+        vc_path = vs_base / "Microsoft Visual Studio" / "18" / "Enterprise" / "VC"
+        if vc_path.exists():
+            msvc_ver = next(vc_path.glob("Tools/MSVC/*/"), None)
+            if msvc_ver:
+                env["CGO_CFLAGS"] = f"-I{msvc_ver.parent / 'include'}"
+                env["CGO_LDFLAGS"] = f"-LIBPATH:{msvc_ver.parent / 'lib/x64'}"
+
     result = subprocess.run(
         [
             "go", "build",
