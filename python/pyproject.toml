@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mst"
-version = "0.1.0"
+# Version is derived from the release tag by setup.py (single source of truth
+# shared with the Go CLI). See resolve_version() in setup.py.
+dynamic = ["version"]
 description = "CGO Python bindings for mst (Meta-Search Tool) — concurrent multi-engine web search with RRF ranking"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
