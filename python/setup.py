@@ -100,6 +100,14 @@ def build_cgo():
 
 build_cgo()
 
+# On Windows, -buildmode=c-shared produces a .dll + .a import lib.
+# link.exe needs the .a file as a link input; on Linux/macOS we pass
+# the .so directly with rpath so ctypes can find it at runtime.
+if _platform.system() == "Windows":
+    _link_args = [str(CGO_LIB.with_suffix(".a"))]
+else:
+    _link_args = ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
+
 extensions = [
     Extension(
         "mst._mst",
@@ -107,13 +115,7 @@ extensions = [
         # relative to setup.py's directory — absolute paths are rejected.
         sources=["src/mst/_mst.pyx"],
         include_dirs=["src/mst"],
-        extra_link_args=(
-            ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
-            if _platform.system() != "Windows"
-            # On Windows, -buildmode=c-shared produces a .dll + .a import lib.
-            # link.exe needs the .a file as a link input.
-            else [str(CGO_LIB.with_suffix(".a"))],
-        ),
+        extra_link_args=_link_args,
     ),
 ]
 
