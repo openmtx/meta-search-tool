@@ -4,12 +4,17 @@
 import ctypes
 import json
 import os
+import platform as _platform
 from typing import Any
 
 
 # --- Load the CGO shared library ---
 
-_cgo_path = os.path.join(os.path.dirname(__file__), "_mst.so")
+# Go's -buildmode=c-shared produces .so on Linux/macOS, .dll on Windows.
+if _platform.system() == "Windows":
+    _cgo_path = os.path.join(os.path.dirname(__file__), "_mst.dll")
+else:
+    _cgo_path = os.path.join(os.path.dirname(__file__), "_mst.so")
 _lib = ctypes.CDLL(_cgo_path)
 
 # Set up function signatures — use c_void_p to preserve Go-allocated pointers

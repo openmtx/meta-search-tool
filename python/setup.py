@@ -11,9 +11,19 @@ from pathlib import Path
 from Cython.Build import cythonize
 from setuptools import Extension, setup
 
+import platform as _platform
+
 CGO_DIR = Path(__file__).parent.parent / "cgo"
 PYTHON_SRC = Path(__file__).parent / "src"
-CGO_LIB = PYTHON_SRC / "mst" / "_mst.so"
+
+# Platform-specific shared library name for Go's -buildmode=c-shared.
+# Linux/macOS: .so (ELF/DYLIB). Windows: .dll (PE/COFF).
+if _platform.system() == "Windows":
+    CGO_LIB = PYTHON_SRC / "mst" / "_mst.dll"
+    CGO_LIB_REL = "_mst.dll"
+else:
+    CGO_LIB = PYTHON_SRC / "mst" / "_mst.so"
+    CGO_LIB_REL = "_mst.so"
 
 
 def resolve_version():
@@ -94,15 +104,15 @@ extensions = [
         extra_link_args=[
             "-Wl,-rpath,$ORIGIN",
             str(CGO_LIB),
-        ],
+        ] if _platform.system() != "Windows" else [str(CGO_LIB)],
     ),
 ]
 
 setup(
     version=resolve_version(),
-    # Ship the Go c-shared lib (_mst.so) inside the package so ctypes can load it
+    # Ship the Go c-shared lib inside the package so ctypes can load it
     # at runtime; drop the generated Cython C (not needed after compilation).
-    package_data={"mst": ["_mst.so"]},
+    package_data={"mst": [CGO_LIB_REL]},
     exclude_package_data={"mst": ["_mst.c"]},
     ext_modules=cythonize(extensions, language_level="3"),
 )
