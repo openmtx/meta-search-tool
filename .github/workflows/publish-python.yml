@@ -71,10 +71,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-13 = Intel (x86_64); macos-14 = Apple Silicon (arm64)
-          - { os: macos-13, arch: x86_64, python: "3.11" }
-          - { os: macos-13, arch: x86_64, python: "3.12" }
-          - { os: macos-13, arch: x86_64, python: "3.13" }
+          # macos-14 = Apple Silicon (arm64). Intel (macos-13) runners have
+          # chronic queue delays on GH Actions; users on Intel Macs can use the
+          # Go CLI binary (darwin-amd64) built by release.yml or pip install
+          # from source.
           - { os: macos-14, arch: arm64,   python: "3.11" }
           - { os: macos-14, arch: arm64,   python: "3.12" }
           - { os: macos-14, arch: arm64,   python: "3.13" }
