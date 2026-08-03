@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openmtx/meta-search-tool/internal/cgoapi"
 	"github.com/openmtx/meta-search-tool/internal/cli"
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
@@ -45,22 +46,22 @@ func enabledPtr(b bool) *bool { return &b }
 
 func TestResolve_Whitelist(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""), fe("b", 1, true, false, ""), fe("c", 1, true, false, ""))
-	p, err := resolvePlan(flagsOf("--engine", "a,c", "q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("--engine", "a,c", "q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"a", "c"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"a", "c"}) {
 		t.Errorf("whitelist engines = %v, want [a c]", names)
 	}
 }
 
 func TestResolve_Exclude(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""), fe("b", 1, true, false, ""), fe("c", 1, true, false, ""))
-	p, err := resolvePlan(flagsOf("--exclude", "b", "q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("--exclude", "b", "q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"a", "c"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"a", "c"}) {
 		t.Errorf("exclude engines = %v, want [a c]", names)
 	}
 }
@@ -68,11 +69,11 @@ func TestResolve_Exclude(t *testing.T) {
 func TestResolve_WhitelistAndExclude(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""), fe("b", 1, true, false, ""))
 	// --engine selects a,b; --exclude removes b → only a.
-	p, err := resolvePlan(flagsOf("--engine", "a,b", "--exclude", "b", "q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("--engine", "a,b", "--exclude", "b", "q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"a"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"a"}) {
 		t.Errorf("engines = %v, want [a] (--exclude wins)", names)
 	}
 }
@@ -82,11 +83,11 @@ func TestResolve_MissingKeyAutoSkipped(t *testing.T) {
 		fe("brave", 2.0, true, true, "BRAVE_API_KEY"), // keyed, no key set
 		fe("wiki", 1.0, true, false, ""),              // keyless
 	)
-	p, err := resolvePlan(flagsOf("q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"wiki"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"wiki"}) {
 		t.Errorf("engines = %v, want [wiki] (brave auto-skipped, missing key)", names)
 	}
 }
@@ -97,11 +98,11 @@ func TestResolve_MissingKeyPresentRuns(t *testing.T) {
 		fe("brave", 2.0, true, true, "BRAVE_API_KEY"),
 		fe("wiki", 1.0, true, false, ""),
 	)
-	p, err := resolvePlan(flagsOf("q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"brave", "wiki"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"brave", "wiki"}) {
 		t.Errorf("engines = %v, want [brave wiki] (key present)", names)
 	}
 }
@@ -111,11 +112,11 @@ func TestResolve_DisabledByConfig(t *testing.T) {
 	cfg := &config.Config{Version: 1, Engines: map[string]*config.EngineConfig{
 		"b": {Enabled: enabledPtr(false)},
 	}}
-	p, err := resolvePlan(flagsOf("q"), cfg, reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("q"), cfg, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := engineNames(p.engines); !eq(names, []string{"a"}) {
+	if names := engineNames(p.Engines); !eq(names, []string{"a"}) {
 		t.Errorf("engines = %v, want [a] (b disabled by config)", names)
 	}
 }
@@ -128,15 +129,15 @@ func TestResolve_WeightPrecedence(t *testing.T) {
 	cfg := &config.Config{Version: 1, Engines: map[string]*config.EngineConfig{
 		"a": {Weight: 3.0},
 	}}
-	p, err := resolvePlan(flagsOf("--weight", "a=5.0", "q"), cfg, reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("--weight", "a=5.0", "q"), cfg, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.weights["a"] != 5.0 {
-		t.Errorf("a weight = %v, want 5.0 (flag wins)", p.weights["a"])
+	if p.Weights["a"] != 5.0 {
+		t.Errorf("a weight = %v, want 5.0 (flag wins)", p.Weights["a"])
 	}
-	if p.weights["b"] != 1.5 {
-		t.Errorf("b weight = %v, want 1.5 (default)", p.weights["b"])
+	if p.Weights["b"] != 1.5 {
+		t.Errorf("b weight = %v, want 1.5 (default)", p.Weights["b"])
 	}
 }
 
@@ -146,33 +147,33 @@ func TestResolve_PerEngineTimeoutPrecedence(t *testing.T) {
 		"a": {Timeout: "2s"}, // config beats the flag/derived default
 	}}
 	// --timeout 10s → default per-engine = min(10s, 6s) = 6s; but a has config 2s.
-	p, err := resolvePlan(flagsOf("--timeout", "10s", "q"), cfg, reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("--timeout", "10s", "q"), cfg, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.timeouts["a"] != 2*time.Second {
-		t.Errorf("a timeout = %v, want 2s (config)", p.timeouts["a"])
+	if p.Timeouts["a"] != 2*time.Second {
+		t.Errorf("a timeout = %v, want 2s (config)", p.Timeouts["a"])
 	}
-	if p.timeouts["b"] != 6*time.Second {
-		t.Errorf("b timeout = %v, want 6s (min(global 10s, 6s ceiling))", p.timeouts["b"])
+	if p.Timeouts["b"] != 6*time.Second {
+		t.Errorf("b timeout = %v, want 6s (min(global 10s, 6s ceiling))", p.Timeouts["b"])
 	}
-	if p.globalTo != 10*time.Second {
-		t.Errorf("global timeout = %v, want 10s", p.globalTo)
+	if p.GlobalTo != 10*time.Second {
+		t.Errorf("global timeout = %v, want 10s", p.GlobalTo)
 	}
 }
 
 func TestResolve_FetchLimitAndRegOrder(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""), fe("b", 1, true, false, ""))
-	p, err := resolvePlan(flagsOf("-n", "10", "q"), defaultCfg(), reg)
+	p, err := cgoapi.ResolvePlan(flagsOf("-n", "10", "q"), defaultCfg(), reg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// max((0+10)*3, 20) = 30
-	if p.fetchLimit != 30 {
-		t.Errorf("fetchLimit = %d, want 30", p.fetchLimit)
+	if p.FetchLimit != 30 {
+		t.Errorf("fetchLimit = %d, want 30", p.FetchLimit)
 	}
-	if p.regOrder["a"] != 0 || p.regOrder["b"] != 1 {
-		t.Errorf("regOrder = %v, want a=0 b=1", p.regOrder)
+	if p.RegOrder["a"] != 0 || p.RegOrder["b"] != 1 {
+		t.Errorf("regOrder = %v, want a=0 b=1", p.RegOrder)
 	}
 }
 
@@ -180,7 +181,7 @@ func TestResolve_FetchLimitAndRegOrder(t *testing.T) {
 
 func TestResolve_UnknownEngineInEngine(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""))
-	_, err := resolvePlan(flagsOf("--engine", "bogus", "q"), defaultCfg(), reg)
+	_, err := cgoapi.ResolvePlan(flagsOf("--engine", "bogus", "q"), defaultCfg(), reg)
 	if err == nil {
 		t.Fatal("expected error for unknown engine in --engine")
 	}
@@ -188,7 +189,7 @@ func TestResolve_UnknownEngineInEngine(t *testing.T) {
 
 func TestResolve_UnknownEngineInWeight(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""))
-	_, err := resolvePlan(flagsOf("--weight", "bogus=1", "q"), defaultCfg(), reg)
+	_, err := cgoapi.ResolvePlan(flagsOf("--weight", "bogus=1", "q"), defaultCfg(), reg)
 	if err == nil {
 		t.Fatal("expected error for unknown engine in --weight")
 	}
@@ -196,7 +197,7 @@ func TestResolve_UnknownEngineInWeight(t *testing.T) {
 
 func TestResolve_RequireCannotStart(t *testing.T) {
 	reg := regOf(t, fe("brave", 2, true, true, "BRAVE_API_KEY")) // no key set
-	_, err := resolvePlan(flagsOf("--require", "brave", "q"), defaultCfg(), reg)
+	_, err := cgoapi.ResolvePlan(flagsOf("--require", "brave", "q"), defaultCfg(), reg)
 	if err == nil {
 		t.Fatal("expected error: --require'd engine missing key cannot start")
 	}
@@ -204,7 +205,7 @@ func TestResolve_RequireCannotStart(t *testing.T) {
 
 func TestResolve_RequireExcludeConflict(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""))
-	_, err := resolvePlan(flagsOf("--require", "a", "--exclude", "a", "q"), defaultCfg(), reg)
+	_, err := cgoapi.ResolvePlan(flagsOf("--require", "a", "--exclude", "a", "q"), defaultCfg(), reg)
 	if err == nil {
 		t.Fatal("expected error for --require ∩ --exclude")
 	}
@@ -212,7 +213,7 @@ func TestResolve_RequireExcludeConflict(t *testing.T) {
 
 func TestResolve_BadGlobalTimeout(t *testing.T) {
 	reg := regOf(t, fe("a", 1, true, false, ""))
-	_, err := resolvePlan(flagsOf("--timeout", "5x", "q"), defaultCfg(), reg)
+	_, err := cgoapi.ResolvePlan(flagsOf("--timeout", "5x", "q"), defaultCfg(), reg)
 	if err == nil {
 		t.Fatal("expected error for invalid --timeout")
 	}

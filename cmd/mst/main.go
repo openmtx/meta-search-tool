@@ -17,23 +17,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openmtx/meta-search-tool/internal/cgoapi"
 	"github.com/openmtx/meta-search-tool/internal/cli"
 	"github.com/openmtx/meta-search-tool/internal/config"
 	"github.com/openmtx/meta-search-tool/internal/engine"
-	"github.com/openmtx/meta-search-tool/internal/engine/arxiv"
-	"github.com/openmtx/meta-search-tool/internal/engine/bing"
-	"github.com/openmtx/meta-search-tool/internal/engine/brave"
-	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
-	"github.com/openmtx/meta-search-tool/internal/engine/google"
-	"github.com/openmtx/meta-search-tool/internal/engine/grokipedia"
-	"github.com/openmtx/meta-search-tool/internal/engine/hackernews"
-	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
-	"github.com/openmtx/meta-search-tool/internal/engine/pubmed"
-	"github.com/openmtx/meta-search-tool/internal/engine/stackexchange"
-	"github.com/openmtx/meta-search-tool/internal/engine/tavily"
-	"github.com/openmtx/meta-search-tool/internal/engine/wikipedia"
 	"github.com/openmtx/meta-search-tool/internal/format"
-	"github.com/openmtx/meta-search-tool/internal/rank"
 	"github.com/openmtx/meta-search-tool/internal/search"
 )
 
@@ -42,58 +30,14 @@ import (
 var version = "dev"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, defaultRegistry()))
-}
-
-// defaultRegistry builds the engine registry and registers all available engines.
-// Engines that require keys but don't have them set are auto-skipped at runtime
-// by resolvePlan (StatusMissingKey), so they appear in --list-engines as
-// "missing-key" rather than silently vanishing.
-func defaultRegistry() *engine.Registry {
-	reg := engine.NewRegistry()
-	if err := reg.Register(arxiv.New()); err != nil {
-		panic("arxiv: " + err.Error())
-	}
-	if err := reg.Register(pubmed.New()); err != nil {
-		panic("pubmed: " + err.Error())
-	}
-	if err := reg.Register(stackexchange.New()); err != nil {
-		panic("stackexchange: " + err.Error())
-	}
-	if err := reg.Register(hackernews.New()); err != nil {
-		panic("hackernews: " + err.Error())
-	}
-	if err := reg.Register(grokipedia.New()); err != nil {
-		panic("grokipedia: " + err.Error())
-	}
-	if err := reg.Register(brave.New()); err != nil {
-		panic("brave: " + err.Error())
-	}
-	if err := reg.Register(mojeek.New()); err != nil {
-		panic("mojeek: " + err.Error())
-	}
-	if err := reg.Register(wikipedia.New()); err != nil {
-		panic("wikipedia: " + err.Error())
-	}
-	if err := reg.Register(ddg.New()); err != nil {
-		panic("ddg: " + err.Error())
-	}
-	if err := reg.Register(google.New()); err != nil {
-		panic("google: " + err.Error())
-	}
-	if err := reg.Register(bing.New()); err != nil {
-		panic("bing: " + err.Error())
-	}
-	if err := reg.Register(tavily.New()); err != nil {
-		panic("tavily: " + err.Error())
-	}
-	return reg
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, cgoapi.DefaultRegistry()))
 }
 
 // run is the testable core: parse flags → load config → resolve the engine plan →
 // dispatch → rank → format → return the §4 exit code. All I/O goes through the
 // provided readers/writers and the registry is injected, so behavior is fully
-// exercisable without spawning the binary.
+// exercisable without spawning the binary. Plan/state/exit-code resolution is
+// delegated to internal/cgoapi, shared with the CGO bridge.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.Registry) int {
 	flags, err := cli.Parse(args, stderr)
 	if err != nil {
@@ -131,7 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 			emitError(stderr, format.ErrCodeUsage, qerr.Error(), 2)
 			return 2
 		}
-		dry, err := resolveDryRun(flags, cfg, reg)
+		dry, err := cgoapi.ResolveDryRun(flags, cfg, reg)
 		if err != nil {
 			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
 			return 2
@@ -151,7 +95,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 			emitError(stderr, format.ErrCodeUsage, verr.Error(), 2)
 			return 2
 		}
-		entries := computeListEntries(flags, cfg, reg)
+		entries := cgoapi.ComputeListEntries(flags, cfg, reg)
 		out, err := format.MarshalListEngines(entries, flags.Format)
 		if err != nil {
 			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
@@ -172,17 +116,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 		return 2
 	}
 
-	p, perr := resolvePlan(flags, cfg, reg)
+	p, perr := cgoapi.ResolvePlan(flags, cfg, reg)
 	if perr != nil {
 		emitError(stderr, format.ErrCodeUsage, perr.Error(), 2)
 		return 2
 	}
 
 	// Dispatch under a global deadline (§7).
-	ctx, cancel := context.WithTimeout(context.Background(), p.globalTo)
+	ctx, cancel := context.WithTimeout(context.Background(), p.GlobalTo)
 	defer cancel()
 
-	requireSet := setOf(flags.Require)
+	requireSet := cgoapi.SetOf(flags.Require)
 
 	// --raw: bypass normalization; emit each engine's parsed native payload
 	// keyed by engine name (§10). JSON-only (--raw + text/table/jsonl is exit 2,
@@ -190,11 +134,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	// takes precedence when both are set.
 	if flags.Raw {
 		start := time.Now()
-		runs := search.DispatchRaw(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
+		runs := search.DispatchRaw(ctx, p.Engines, query, p.FetchLimit, p.Timeouts, p.EngineOpts)
 		tookMs := time.Since(start).Milliseconds()
-		env := format.BuildRawEnvelope(query, runs, p.limit, tookMs)
-		exit := computeExit(rawPayloadCount(runs), runs, requireSet, flags.Strict)
-		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
+		env := format.BuildRawEnvelope(query, runs, p.Limit, tookMs)
+		exit := cgoapi.ComputeExit(rawPayloadCount(runs), runs, requireSet, flags.Strict)
+		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.Engines))
 		out, merr := format.MarshalRaw(env)
 		if merr != nil {
 			emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
@@ -209,14 +153,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	// requires a -v notice when --offset is set under --no-merge.
 	if flags.NoMerge {
 		start := time.Now()
-		runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
+		runs := search.Dispatch(ctx, p.Engines, query, p.FetchLimit, p.Timeouts, p.EngineOpts)
 		tookMs := time.Since(start).Milliseconds()
-		if p.offset != 0 {
+		if p.Offset != 0 {
 			vlog(stderr, flags.Verbose, 1, "--offset is a no-op under --no-merge (results are not merged)")
 		}
-		env := format.BuildUnmergedEnvelope(query, runs, p.limit, tookMs)
-		exit := computeExit(len(env.Results), runs, requireSet, flags.Strict)
-		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
+		env := format.BuildUnmergedEnvelope(query, runs, p.Limit, tookMs)
+		exit := cgoapi.ComputeExit(len(env.Results), runs, requireSet, flags.Strict)
+		emitNonZeroError(stderr, exit, runs, flags.Require, len(p.Engines))
 		out, merr := format.MarshalUnmerged(env, flags.Format)
 		if merr != nil {
 			emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
@@ -226,21 +170,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 		return exit
 	}
 
-	// Merged path: dispatch → rank → window (§9).
-	start := time.Now()
-	runs := search.Dispatch(ctx, p.engines, query, p.fetchLimit, p.timeouts, p.engineOpts)
-	results := rank.Window(rank.Rank(runs, p.weights, p.regOrder, p.rrfK), p.offset, p.limit)
-	tookMs := time.Since(start).Milliseconds()
-
-	// Extract the AI-generated answer from the tavily raw payload (if any).
-	// The answer does NOT compose with RRF — it is surfaced as a separate
-	// top-level field in the output envelope (§5 Tier D, Sprint D.1.2).
-	answer := extractTavilyAnswer(runs)
-
-	env := format.BuildEnvelope(query, runs, results, p.limit, tookMs, answer)
-
-	exit := computeExit(len(results), runs, requireSet, flags.Strict)
-	emitNonZeroError(stderr, exit, runs, flags.Require, len(p.engines))
+	// Merged path: dispatch → rank → window (§9), via the shared execute function
+	// used by the CGO bridge too.
+	mr := cgoapi.RunMerged(ctx, p, query, requireSet, flags.Strict)
+	emitNonZeroError(stderr, mr.Exit, mr.Runs, flags.Require, len(p.Engines))
 
 	// --fields: project result fields before rendering.
 	var out []byte
@@ -250,35 +183,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 			emitError(stderr, format.ErrCodeUsage, err.Error(), 2)
 			return 2
 		}
-		out, merr = MarshalResults(results, flags.Format, flags.Fields,
-			query, tookMs, p.limit, env.Engines, answer)
+		out, merr = MarshalResults(mr.Results, flags.Format, flags.Fields,
+			query, mr.Envelope.TookMs, p.Limit, mr.Envelope.Engines, mr.Envelope.Answer)
 	} else {
-		out, merr = format.Marshal(env, flags.Format)
+		out, merr = format.Marshal(mr.Envelope, flags.Format)
 	}
 	if merr != nil {
 		emitError(stderr, format.ErrCodeUsage, merr.Error(), 2)
 		return 2
 	}
 	stdout.Write(out)
-	return exit
-}
-
-// computeExit returns the §4 exit code from the run outcome. Precedence
-// (highest first): 2 > 3 > 1 > 0. Exit 2 is decided upstream (before dispatch);
-// this only distinguishes 0 / 1 / 3. Exit 3 = a required engine ran but failed,
-// OR --strict with any engine failure; exit 3 beats exit 1 when both apply.
-// resultCount is the number of output items produced (merged results, unmerged
-// results, or raw payloads) — 0 ⇒ exit 1.
-func computeExit(resultCount int, runs []engine.EngineRun, requireSet map[string]bool, strict bool) int {
-	for _, r := range runs {
-		if r.Err != nil && (requireSet[r.Engine] || strict) {
-			return 3
-		}
-	}
-	if resultCount == 0 {
-		return 1
-	}
-	return 0
+	return mr.Exit
 }
 
 // emitNonZeroError writes the §11 structured stderr object for a non-0/2 exit:
@@ -324,7 +239,7 @@ func rawPayloadCount(runs []engine.EngineRun) int {
 // engineFailureMessage builds a human-readable message for the exit-3 structured
 // error, distinguishing a required-engine failure from a --strict failure.
 func engineFailureMessage(runs []engine.EngineRun, require []string) string {
-	requireSet := setOf(require)
+	requireSet := cgoapi.SetOf(require)
 	var failed, required []string
 	for _, r := range runs {
 		if r.Err == nil {
@@ -392,18 +307,4 @@ func validateListFormat(format string) error {
 // emitError writes the §11 structured error object to w.
 func emitError(w io.Writer, code, message string, exit int) {
 	w.Write(format.MarshalError(code, message, exit))
-}
-
-// extractTavilyAnswer extracts the AI-generated answer from the tavily engine's
-// raw payload, if present. Returns empty string if tavily didn't run, didn't
-// return an answer, or include_answer was not enabled. The answer is surfaced
-// as a separate top-level field in the output envelope (§5 Tier D, Sprint D.1.2)
-// and does NOT compose with RRF.
-func extractTavilyAnswer(runs []engine.EngineRun) string {
-	for _, r := range runs {
-		if r.Engine == "tavily" && r.Raw != nil {
-			return tavily.GetAnswerFromRaw(r.Raw)
-		}
-	}
-	return ""
 }
