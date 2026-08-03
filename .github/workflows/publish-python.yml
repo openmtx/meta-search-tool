@@ -4,94 +4,107 @@ on:
   push:
     tags:
       - "v*"  # same tag as the CLI (release.yml) — one tag releases both
-  workflow_dispatch:  # allow manual trigger for testing (build+test only; no upload)
+  workflow_dispatch:  # build+test only; the upload job is gated to tag pushes
 
 permissions:
   contents: write
   id-token: write  # required for trusted publishing (PyPI)
 
 jobs:
-  build-wheels:
-    name: Build wheels ${{ matrix.python }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  # --- Linux: build in a manylinux_2_34 container ---------------------------
+  # Go's c-shared runtime (go.mod "go 1.26") references GLIBC_2.34 symbols, so
+  # the wheel floor is manylinux_2_34 (RHEL 9 / Ubuntu 22.04+). Building on
+  # ubuntu-latest and repairing with auditwheel fails (too-new glibc symbols),
+  # so we build inside the container, then auditwheel-repair to the same plat.
+  build-linux:
+    name: manylinux_2_34 x86_64
+    runs-on: ubuntu-latest
     env:
-      # The tag is the single version source for both the CLI and this package.
-      # setup.py strips the leading 'v' (PyPI needs '0.4.0', not 'v0.4.0').
+      # Tag is the single version source (setup.py strips the leading 'v').
       MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-    strategy:
-      matrix:
-        include:
-          # Linux — ubuntu-latest has Go + gcc pre-installed
-          - os: ubuntu-latest
-            python: cp311-cp311
-            tag: manylinux_x86_64
-          - os: ubuntu-latest
-            python: cp312-cp312
-            tag: manylinux_x86_64
-          - os: ubuntu-latest
-            python: cp313-cp313
-            tag: manylinux_x86_64
-          # macOS Intel (macos-13)
-          - os: macos-13
-            python: cp311-cp311
-            tag: macosx_x86_64
-          - os: macos-13
-            python: cp312-cp312
-            tag: macosx_x86_64
-          - os: macos-13
-            python: cp313-cp313
-            tag: macosx_x86_64
-          # macOS Apple Silicon (macos-14)
-          - os: macos-14
-            python: cp311-cp311
-            tag: macosx_arm64
-          - os: macos-14
-            python: cp312-cp312
-            tag: macosx_arm64
-          - os: macos-14
-            python: cp313-cp313
-            tag: macosx_arm64
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go (needed for CGO build)
-        uses: actions/setup-go@v5
+      - name: Build + repair manylinux_2_34 wheels (cp311/312/313)
+        run: |
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -e MST_VERSION="$MST_VERSION" \
+            quay.io/pypa/manylinux_2_34_x86_64 bash -c '
+              set -euxo pipefail
+              # Install Go — pin matches go.mod "go 1.26"; bump with the directive.
+              curl -sSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | tar -C /usr/local -xz
+              export PATH=/usr/local/go/bin:$PATH CGO_ENABLED=1
+              mkdir -p /work/wheels
+              for PY in cp311-cp311 cp312-cp312 cp313-cp313; do
+                PYBIN=/opt/python/$PY/bin
+                "$PYBIN/python" -m pip install --upgrade --quiet build cython auditwheel
+                ( cd /work/python && "$PYBIN/python" -m build --wheel )
+                "$PYBIN/python" -m auditwheel repair /work/python/dist/*.whl \
+                  -w /work/wheels --plat manylinux_2_34_x86_64
+                rm -rf /work/python/dist /work/python/build \
+                       /work/python/src/mst/_mst.c /work/python/src/mst.egg-info
+              done
+              echo "wheels:"; ls -1 /work/wheels
+            '
+
+      - name: Test a Linux wheel (cp312, no network)
+        run: |
+          python3 -m pip install --quiet pytest
+          python3 -m pip install --force-reinstall --no-deps wheels/mst-*cp312*manylinux*.whl
+          cd python && python3 -m pytest -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: wheels/*.whl
+          if-no-files-found: error
+
+  # --- macOS: native build (no auditwheel needed; libSystem is system) -------
+  build-macos:
+    name: macOS ${{ matrix.arch }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: "1"
+      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 = Intel (x86_64); macos-14 = Apple Silicon (arm64)
+          - { os: macos-13, arch: x86_64, python: "3.11" }
+          - { os: macos-13, arch: x86_64, python: "3.12" }
+          - { os: macos-13, arch: x86_64, python: "3.13" }
+          - { os: macos-14, arch: arm64,   python: "3.11" }
+          - { os: macos-14, arch: arm64,   python: "3.12" }
+          - { os: macos-14, arch: arm64,   python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
 
-      - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python }}"
 
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip build
-          pip install cython pytest
-
       - name: Build wheel
-        env:
-          CGO_ENABLED: "1"
         run: |
-          cd python
-          python -m build --wheel
-
-      - name: Test the built wheel (deterministic suite; no network)
-        run: |
-          pip install --force-reinstall --no-deps python/dist/*.whl
-          cd python && python -m pytest -q
+          python -m pip install --upgrade --quiet build cython
+          cd python && python -m build --wheel
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.tag }}
+          name: wheels-macos-${{ matrix.arch }}-${{ matrix.python }}
           path: python/dist/*.whl
           if-no-files-found: error
 
+  # --- Publish (tag pushes only) ---------------------------------------------
   upload:
     name: Upload to PyPI
-    needs: [build-wheels]
+    needs: [build-linux, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')  # never publish on workflow_dispatch
     runs-on: ubuntu-latest
     steps:
@@ -102,7 +115,9 @@ jobs:
           path: dist/
 
       - name: Check distributions
-        run: twine check dist/*
+        run: |
+          python -m pip install --quiet twine
+          twine check dist/*
 
       - name: Upload to PyPI
         env:
