@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        py: [cp311, cp312, cp313, cp314]
+        py: [3.11, 3.12, 3.13, 3.14]
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +50,7 @@ jobs:
                      /work/python/src/mst/_mst.c /work/python/src/mst.egg-info
             '
         env:
-          PY: "cp${{ matrix.py }}-${{ matrix.py }}"
+          PY: "cp${{ matrix.py }}-cp${{ matrix.py }}"
 
       - name: Upload Linux wheel artifact
         uses: actions/upload-artifact@v4
