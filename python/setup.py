@@ -58,7 +58,17 @@ def build_cgo():
     env["CGO_ENABLED"] = "1"
 
     result = subprocess.run(
-        ["go", "build", "-buildmode=c-shared", "-o", str(CGO_LIB), "."],
+        [
+            "go", "build",
+            # Disable VCS stamping: we don't embed git info in the .so, and Go's
+            # buildvcs fails (exit 128) in environments where git can't read .git
+            # (e.g. the manylinux build container, or CI checkouts with foreign
+            # .git ownership).
+            "-buildvcs=false",
+            "-buildmode=c-shared",
+            "-o", str(CGO_LIB),
+            ".",
+        ],
         cwd=str(CGO_DIR),
         env=env,
         capture_output=True,

@@ -60,51 +60,10 @@ jobs:
           path: wheels/*.whl
           if-no-files-found: error
 
-  # --- macOS: native build (no auditwheel needed; libSystem is system) -------
-  build-macos:
-    name: macOS ${{ matrix.arch }} · Python ${{ matrix.python }}
-    runs-on: ${{ matrix.os }}
-    env:
-      CGO_ENABLED: "1"
-      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-13 = Intel (x86_64); macos-14 = Apple Silicon (arm64)
-          - { os: macos-13, arch: x86_64, python: "3.11" }
-          - { os: macos-13, arch: x86_64, python: "3.12" }
-          - { os: macos-13, arch: x86_64, python: "3.13" }
-          - { os: macos-14, arch: arm64,   python: "3.11" }
-          - { os: macos-14, arch: arm64,   python: "3.12" }
-          - { os: macos-14, arch: arm64,   python: "3.13" }
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: true
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "${{ matrix.python }}"
-
-      - name: Build wheel
-        run: |
-          python -m pip install --upgrade --quiet build cython
-          cd python && python -m build --wheel
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-macos-${{ matrix.arch }}-${{ matrix.python }}
-          path: python/dist/*.whl
-          if-no-files-found: error
-
   # --- Publish (tag pushes only) ---------------------------------------------
   upload:
     name: Upload to PyPI
-    needs: [build-linux, build-macos]
+    needs: [build-linux]
     if: startsWith(github.ref, 'refs/tags/v')  # never publish on workflow_dispatch
     runs-on: ubuntu-latest
     steps:
