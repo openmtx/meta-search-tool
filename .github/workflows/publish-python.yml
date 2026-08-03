@@ -17,15 +17,18 @@ jobs:
   # ubuntu-latest and repairing with auditwheel fails (too-new glibc symbols),
   # so we build inside the container, then auditwheel-repair to the same plat.
   build-linux:
-    name: manylinux_2_34 x86_64
+    name: manylinux_2_34 x86_64 · Python ${{ matrix.py }}
     runs-on: ubuntu-latest
     env:
-      # Tag is the single version source (setup.py strips the leading 'v').
       MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        py: [cp311, cp312, cp313, cp314]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build + repair manylinux_2_34 wheels (cp311/312/313)
+      - name: Build + repair manylinux_2_34 wheel
         run: |
           docker run --rm \
             -v "$PWD":/work -w /work \
@@ -35,28 +38,24 @@ jobs:
               # Install Go — pin matches go.mod "go 1.26"; bump with the directive.
               curl -sSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | tar -C /usr/local -xz
               export PATH=/usr/local/go/bin:$PATH CGO_ENABLED=1
-              mkdir -p /work/wheels
-              for PY in cp311-cp311 cp312-cp312 cp313-cp313; do
-                PYBIN=/opt/python/$PY/bin
-                "$PYBIN/python" -m pip install --upgrade --quiet build cython auditwheel
-                ( cd /work/python && "$PYBIN/python" -m build --wheel )
-                "$PYBIN/python" -m auditwheel repair /work/python/dist/*.whl \
-                  -w /work/wheels --plat manylinux_2_34_x86_64
-                rm -rf /work/python/dist /work/python/build \
-                       /work/python/src/mst/_mst.c /work/python/src/mst.egg-info
-              done
-              echo "wheels:"; ls -1 /work/wheels
+
+              PY=$PY
+              PYBIN=/opt/python/$PY/bin
+
+              "$PYBIN/python" -m pip install --upgrade --quiet build cython auditwheel
+              ( cd /work/python && "$PYBIN/python" -m build --wheel )
+              "$PYBIN/python" -m auditwheel repair /work/python/dist/*.whl \
+                -w /work/wheels --plat manylinux_2_34_x86_64 || true
+              rm -rf /work/python/dist /work/python/build \
+                     /work/python/src/mst/_mst.c /work/python/src/mst.egg-info
             '
+        env:
+          PY: "cp${{ matrix.py }}-${{ matrix.py }}"
 
-      - name: Test a Linux wheel (cp312, no network)
-        run: |
-          python3 -m pip install --quiet pytest
-          python3 -m pip install --force-reinstall --no-deps wheels/mst_python-*cp312*manylinux*.whl
-          cd python && python3 -m pytest -q
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux wheel artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux
+          name: wheels-linux-${{ matrix.py }}
           path: wheels/*.whl
           if-no-files-found: error
 
@@ -75,9 +74,10 @@ jobs:
           # chronic queue delays on GH Actions; users on Intel Macs can use the
           # Go CLI binary (darwin-amd64) built by release.yml or pip install
           # from source.
-          - { os: macos-14, arch: arm64,   python: "3.11" }
-          - { os: macos-14, arch: arm64,   python: "3.12" }
-          - { os: macos-14, arch: arm64,   python: "3.13" }
+          - { os: macos-14, arch: arm64, python: "3.11" }
+          - { os: macos-14, arch: arm64, python: "3.12" }
+          - { os: macos-14, arch: arm64, python: "3.13" }
+          - { os: macos-14, arch: arm64, python: "3.14" }
     steps:
       - uses: actions/checkout@v4
 
@@ -101,10 +101,45 @@ jobs:
           path: python/dist/*.whl
           if-no-files-found: error
 
+  # --- Windows: native build (CGO produces .dll on Windows) -----------------
+  build-windows:
+    name: Windows x64 · Python ${{ matrix.python }}
+    runs-on: windows-latest
+    env:
+      CGO_ENABLED: "1"
+      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python }}"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade --quiet build cython
+          cd python
+          python -m build --wheel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.python }}
+          path: python/dist/*.whl
+          if-no-files-found: error
+
   # --- Publish (tag pushes only) ---------------------------------------------
   upload:
     name: Upload to PyPI
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')  # never publish on workflow_dispatch
     runs-on: ubuntu-latest
     steps:

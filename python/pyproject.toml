@@ -10,17 +10,17 @@ readme = "README.md"
 dynamic = ["version"]
 description = "CGO Python bindings for mst (Meta-Search Tool) — concurrent multi-engine web search with RRF ranking"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [
     {name = "mst contributors"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 [tool.setuptools.packages.find]
