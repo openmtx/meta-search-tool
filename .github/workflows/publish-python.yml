@@ -65,7 +65,7 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip build
-          pip install cython
+          pip install cython pytest
 
       - name: Build wheel
         env:
@@ -73,6 +73,11 @@ jobs:
         run: |
           cd python
           python -m build --wheel
+
+      - name: Test the built wheel (deterministic suite; no network)
+        run: |
+          pip install --force-reinstall --no-deps python/dist/*.whl
+          cd python && python -m pytest -q
 
       - uses: actions/upload-artifact@v4
         with:
