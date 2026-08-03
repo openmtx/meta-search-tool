@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mst-python"
+readme = "README.md"
 # Version is derived from the release tag by setup.py (single source of truth
 # shared with the Go CLI). See resolve_version() in setup.py.
 dynamic = ["version"]
