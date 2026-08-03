@@ -51,7 +51,7 @@ jobs:
       - name: Test a Linux wheel (cp312, no network)
         run: |
           python3 -m pip install --quiet pytest
-          python3 -m pip install --force-reinstall --no-deps wheels/mst-*cp312*manylinux*.whl
+          python3 -m pip install --force-reinstall --no-deps wheels/mst_python-*cp312*manylinux*.whl
           cd python && python3 -m pytest -q
 
       - uses: actions/upload-artifact@v4
