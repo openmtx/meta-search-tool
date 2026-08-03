@@ -67,20 +67,11 @@ def build_cgo():
     env = os.environ.copy()
     env["CGO_ENABLED"] = "1"
 
-    # On Windows, the default CC is MSYS2 MinGW which produces ELF binaries.
-    # Force Go to use the MSVC toolchain so the CGO lib is a PE DLL that
-    # link.exe can consume. Set CC=cl and pass the VS include path via
-    # CGO_CFLAGS.
+    # On Windows, Go's -buildmode=c-shared produces _mst.dll + _mst.a
+    # (import library). The .dll is not a valid link input for MSVC's
+    # link.exe — we must pass the .a file instead.
     if _platform.system() == "Windows":
-        env["CC"] = "cl"
-        # Find MSVC include dir: scan for the first VC/Tools/MSVC/*/include
-        vs_base = Path(env.get("PROGRAMFILES", r"C:\Program Files"))
-        vc_path = vs_base / "Microsoft Visual Studio" / "18" / "Enterprise" / "VC"
-        if vc_path.exists():
-            msvc_ver = next(vc_path.glob("Tools/MSVC/*/"), None)
-            if msvc_ver:
-                env["CGO_CFLAGS"] = f"-I{msvc_ver.parent / 'include'}"
-                env["CGO_LDFLAGS"] = f"-LIBPATH:{msvc_ver.parent / 'lib/x64'}"
+        env["CGO_LDFLAGS"] = "-static-libgcc -static-libstdc++"
 
     result = subprocess.run(
         [
@@ -116,10 +107,13 @@ extensions = [
         # relative to setup.py's directory — absolute paths are rejected.
         sources=["src/mst/_mst.pyx"],
         include_dirs=["src/mst"],
-        extra_link_args=[
-            "-Wl,-rpath,$ORIGIN",
-            str(CGO_LIB),
-        ] if _platform.system() != "Windows" else [str(CGO_LIB)],
+        extra_link_args=(
+            ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
+            if _platform.system() != "Windows"
+            # On Windows, -buildmode=c-shared produces a .dll + .a import lib.
+            # link.exe needs the .a file as a link input.
+            else [str(CGO_LIB.with_suffix(".a"))],
+        ),
     ),
 ]
 
