@@ -97,14 +97,49 @@ def build_cgo():
 
     print(f"[mst] CGO library built at {CGO_LIB}")
 
+    # Generate .a import library if Go didn't (some MinGW versions skip it).
+    if _platform.system() == "Windows":
+        _import_lib = CGO_LIB.with_suffix(".a")
+        if not _import_lib.exists():
+            print(f"[mst] Generating import library {_import_lib} via dlltool...")
+            # Extract exported symbols from the .dll using objdump
+            result2 = subprocess.run(
+                ["objdump", "-p", str(CGO_LIB)],
+                capture_output=True, text=True,
+            )
+            if result2.returncode == 0:
+                # Build a def file from exported symbols
+                import re as _re
+                def_file = CGO_LIB.with_suffix(".def")
+                lines = ["LIBRARY " + CGO_LIB.stem, "EXPORTS"]
+                for line in result2.stdout.splitlines():
+                    m = _re.search(r"^\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+                    if m:
+                        lines.append("    " + m.group(1))
+                def_file.write_text("\n".join(lines) + "\n")
+                subprocess.run(
+                    ["dlltool", "-d", str(def_file), "-l", str(_import_lib)],
+                    check=True,
+                )
+                def_file.unlink()
+
 
 build_cgo()
 
-# On Windows, -buildmode=c-shared produces a .dll + .a import lib.
-# link.exe needs the .a file as a link input; on Linux/macOS we pass
-# the .so directly with rpath so ctypes can find it at runtime.
+# On Windows, -buildmode=c-shared produces a .dll (PE). We link against
+# it directly; if the .a import lib exists we use that instead.
+# On Linux/macOS we pass the .so directly with rpath so ctypes can find it.
 if _platform.system() == "Windows":
-    _link_args = [str(CGO_LIB.with_suffix(".a"))]
+    _import_lib = CGO_LIB.with_suffix(".a")
+    if _import_lib.exists():
+        _link_args = [str(_import_lib)]
+    else:
+        # No .a — link directly against the .dll (PE format).
+        # /DELAYLOAD lets Windows load the DLL at runtime.
+        _link_args = [
+            "/DELAYLOAD:" + CGO_LIB.name,
+            str(CGO_LIB),
+        ]
 else:
     _link_args = ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
 
