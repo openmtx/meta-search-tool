@@ -33,6 +33,7 @@ jobs:
           docker run --rm \
             -v "$PWD":/work -w /work \
             -e MST_VERSION="$MST_VERSION" \
+            -e PY="$PY" \
             quay.io/pypa/manylinux_2_34_x86_64 bash -c '
               set -euxo pipefail
               # Install Go — pin matches go.mod "go 1.26"; bump with the directive.
