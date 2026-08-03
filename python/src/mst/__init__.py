@@ -15,4 +15,15 @@ Usage:
 from ._mst import MSTError, list_engines, search
 
 __all__ = ["search", "list_engines", "MSTError"]
-__version__ = "0.1.0"
+
+# Reflect the installed distribution version (populated by setup.py from the
+# release tag). Falls back when run from a source tree that isn't installed.
+try:
+    from importlib.metadata import PackageNotFoundError, version as _dist_version
+
+    try:
+        __version__ = _dist_version("mst")
+    except PackageNotFoundError:
+        __version__ = "0.0.0-dev"
+except ImportError:  # Python <3.8 (unsupported, but stay safe)
+    __version__ = "0.0.0-dev"

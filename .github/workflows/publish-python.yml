@@ -3,8 +3,8 @@ name: Publish mst-python to PyPI
 on:
   push:
     tags:
-      - "py-v*"
-  workflow_dispatch:  # allow manual trigger for testing
+      - "v*"  # same tag as the CLI (release.yml) — one tag releases both
+  workflow_dispatch:  # allow manual trigger for testing (build+test only; no upload)
 
 permissions:
   contents: write
@@ -14,6 +14,10 @@ jobs:
   build-wheels:
     name: Build wheels ${{ matrix.python }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      # The tag is the single version source for both the CLI and this package.
+      # setup.py strips the leading 'v' (PyPI needs '0.4.0', not 'v0.4.0').
+      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
     strategy:
       matrix:
         include:
@@ -88,6 +92,7 @@ jobs:
   upload:
     name: Upload to PyPI
     needs: [build-wheels]
+    if: startsWith(github.ref, 'refs/tags/v')  # never publish on workflow_dispatch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
