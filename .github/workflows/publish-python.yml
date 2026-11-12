@@ -4,7 +4,12 @@ on:
   push:
     tags:
       - "v*"  # same tag as the CLI (release.yml) — one tag releases both
-  workflow_dispatch:  # build+test only; the upload job is gated to tag pushes
+  workflow_dispatch:  # build+test; set `tag` to publish a recovery build for an existing tag
+    inputs:
+      tag:
+        description: "Existing release tag to publish (e.g. v0.5.0); leave empty to build+test only"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -17,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check skills/web-search pin
-        run: ./scripts/check_skill_pin.sh
+        run: ./scripts/check_skill_pin.sh "${{ inputs.tag }}"
 
   # --- Linux: build in a manylinux_2_34 container ---------------------------
   # Go's c-shared runtime (go.mod "go 1.26") references GLIBC_2.34 symbols, so
@@ -29,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: pin-check
     env:
-      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      MST_VERSION: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -76,19 +81,19 @@ jobs:
     needs: pin-check
     env:
       CGO_ENABLED: "1"
-      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      MST_VERSION: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macos-14 = Apple Silicon (arm64). Intel (macos-13) runners have
+          # macos-latest = Apple Silicon (arm64). Intel (macos-13) runners have
           # chronic queue delays on GH Actions; users on Intel Macs can use the
           # Go CLI binary (darwin-amd64) built by release.yml or pip install
           # from source.
-          - { os: macos-14, arch: arm64, python: "3.11" }
-          - { os: macos-14, arch: arm64, python: "3.12" }
-          - { os: macos-14, arch: arm64, python: "3.13" }
-          - { os: macos-14, arch: arm64, python: "3.14" }
+          - { os: macos-latest, arch: arm64, python: "3.11" }
+          - { os: macos-latest, arch: arm64, python: "3.12" }
+          - { os: macos-latest, arch: arm64, python: "3.13" }
+          - { os: macos-latest, arch: arm64, python: "3.14" }
     steps:
       - uses: actions/checkout@v4
 
@@ -119,7 +124,7 @@ jobs:
     needs: pin-check
     env:
       CGO_ENABLED: "1"
-      MST_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      MST_VERSION: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -152,7 +157,9 @@ jobs:
   upload:
     name: Upload to PyPI
     needs: [build-linux, build-macos, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v')  # never publish on workflow_dispatch
+    # Tag pushes publish automatically; a manual dispatch with `tag` is the
+    # deliberate recovery path for an existing tag (e.g. runner failures).
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
