@@ -86,6 +86,7 @@ cat query.txt | mst --stdin
 | `--require` | — | Comma-separated engines that must run. If one cannot *start* (unknown name, disabled, or missing key) → exit `2`; if one runs but errors/times out → exit `3` (output still emitted). |
 | `--strict` | `false` | Exit `3` if any engine that ran failed or timed out, even when results are returned. Off by default so `mst … \| jq …` pipelines keep working under `pipefail`; engine failures are warnings otherwise. |
 | `--timeout` | `8s` | The single user-facing time budget for the run (e.g. `5s`, `500ms`). Caps the whole run; per-engine budgets derive from it. |
+| `--proxy` | — | Route this run's outbound engine requests through `URL`: `http`, `https`, `socks5`, or `socks5h`; credentials are allowed in the URL (`http://user:pass@host:port`). Absent/empty → the standard `HTTP_PROXY`/`HTTPS_PROXY` environment behavior is unchanged. See "Proxy precedence" (§6). |
 | `--per-engine-timeout` | *derived* | Per-engine timeout. Defaults to `min(--timeout, 6s)` — the 6s ceiling fits the full 2-retry budget (§11); set only for advanced tuning (tier 3). |
 | `--no-merge` | `false` | Keep results grouped per-engine instead of merged. |
 | `--raw` | `false` | Emit raw per-engine payloads without normalization. |
@@ -189,7 +190,7 @@ say "tier-1 only":
   `--offset`, `-f/--format`, `--fields`, `--weight`, `--list-engines`,
   `--version`.
 - **Tier 2 — tuning (documented, discouraged for routine skill use):**
-  `--rrf-k`, `--require`, `--strict`, `--timeout`.
+  `--rrf-k`, `--require`, `--strict`, `--timeout`, `--proxy`.
 - **Tier 3 — debug/internal (humans; an LLM should not need these):** `--raw`,
   `--no-merge`, `--per-engine-timeout`, `--config`, `--verbose`.
 
@@ -474,6 +475,33 @@ engines:
   engine is named in `--require`, the missing key is a config error (exit `2`,
   see §4).
 
+### Proxy precedence
+
+Outbound engine traffic resolves its proxy **per run**, with the same
+later-wins philosophy:
+
+1. `--proxy URL` (explicit; highest).
+2. `HTTP_PROXY` / `HTTPS_PROXY` environment variables — the standard Go
+   environment-proxy rules, which still honor `NO_PROXY`.
+3. Direct connection.
+
+Rules:
+
+- An **explicit** proxy always wins, including when `NO_PROXY` matches the
+  destination — `NO_PROXY` filters only the *environment-derived* proxy. This is
+  deliberate: `--proxy`/`proxy=` is an explicit instruction from the caller, and
+  silently bypassing it would defeat a "no direct egress" requirement.
+- A configured proxy that cannot be reached is an **engine error**, never a
+  silent fallback to direct egress.
+- There is **no** `defaults.proxy` config field in v0.6 (deferred until a
+  consumer needs it) and no process-global setter; `mst` never mutates its own
+  environment. Each run owns its transport, so concurrent runs with different
+  proxies are isolated (§7).
+- Supported schemes: `http`, `https`, `socks5`, `socks5h`. `socks5h` and
+  `socks5` are equivalent here: SOCKS5 name resolution happens at the proxy
+  (remote DNS) in both cases.
+- An invalid URL or unsupported scheme is a usage error → exit `2`.
+
 ## 7. Execution Model
 
 ```
@@ -490,6 +518,10 @@ query ────▶ │  dispatcher │ ──┬─▶ engine A ─┐
   (default 8 in flight) to bound load and avoid tripping rate limits or looking
   like a burst. This is a fixed internal default in v1 — no flag, no config field
   — and is a no-op while fewer than 8 engines are enabled.
+- **Per-run HTTP client.** Each run attaches one `*http.Client` to its context
+  (`internal/httpx`); every engine request in that run uses it, so a per-search
+  proxy (§6) applies uniformly without global state and concurrent runs with
+  different proxies cannot leak clients into each other.
 - A failing/timed-out engine returns `(nil, error)`; it does **not** abort the
   run. Errors are surfaced in the output's `engines` block. A *paginating*
   engine that succeeds on some pages but fails on a later one returns its
@@ -742,6 +774,12 @@ would need a different merge strategy and is deferred (§18).
   UA but now detects Mojeek's Altcha challenge as an error. Making the UA
   user-configurable (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
 - Outbound requests limited to configured engine endpoints; no arbitrary URLs.
+- **Proxy (per-run).** An explicit proxy (`--proxy`, or the Python `proxy=`
+  argument) is honored for every engine request in that run and is never
+  silently bypassed: an unreachable proxy yields engine errors, not direct
+  egress. TLS verification stays on through the proxy (no MITM opt-out), the
+  proxy URL is never logged or echoed in error messages (credentials in the URL
+  are redacted), and the process environment is never mutated to select a proxy.
 - TLS verification always on; no option to disable.
 
 ## 13. Logging & Observability

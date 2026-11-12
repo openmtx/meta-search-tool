@@ -29,6 +29,7 @@ import (
 
 	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/engine/retry"
+	"github.com/openmtx/meta-search-tool/internal/httpx"
 )
 
 // ---- Configurable endpoints (tests override via Set*) -----------------------
@@ -253,7 +254,7 @@ func fetchCSEToken(ctx context.Context, cx string) (token, cselibv, exp string, 
 	}
 	req.Header.Set("User-Agent", engine.UserAgent())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.Client(ctx).Do(req)
 	if err != nil {
 		return "", "", "", fmt.Errorf("google: cse token fetch: %w", err)
 	}

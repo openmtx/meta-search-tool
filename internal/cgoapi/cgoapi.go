@@ -551,6 +551,10 @@ type SearchOptions struct {
 	RRFK    int
 	Timeout time.Duration
 	Weights map[string]float64
+	// Proxy is the per-run outbound proxy URL (http, https, socks5, socks5h).
+	// Empty means "use the HTTP_PROXY/HTTPS_PROXY environment behavior"
+	// (DECISIONS 2026-11-12, §6).
+	Proxy string
 }
 
 // SearchResult is the parsed output from a search call.
@@ -601,6 +605,12 @@ func Search(query string, opts SearchOptions) (*SearchResult, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 	defer cancel()
+
+	ctx, cleanup, err := ContextWithProxy(ctx, opts.Proxy)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 
 	mr := RunMerged(ctx, p, query, nil, false)
 	return &SearchResult{Envelope: mr.Envelope, ExitCode: mr.Exit}, nil

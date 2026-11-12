@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/openmtx/meta-search-tool/internal/httpx"
 )
 
 // MaxRetries is the maximum number of retry attempts after the initial request
@@ -83,7 +85,7 @@ func Do(ctx context.Context, engineName string, newReq func() (*http.Request, er
 			return nil, fmt.Errorf("%s: build request: %w", engineName, err)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpx.Client(ctx).Do(req)
 		if err != nil {
 			// Network/DNS error — retryable (§11: "treated identically to
 			// timeouts"). A context-cancellation surfaced here means the

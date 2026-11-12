@@ -2,11 +2,15 @@ package retry
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/openmtx/meta-search-tool/internal/httpx"
 )
 
 // --- Golden-table: IsRetryable --------------------------------------------
@@ -306,6 +310,36 @@ func TestJitterRange(t *testing.T) {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+// recordingTransport answers every request with a 200 and counts hits, so a
+// test can prove the context's client was the one used (§7).
+type recordingTransport struct{ hits int32 }
+
+func (r *recordingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	atomic.AddInt32(&r.hits, 1)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{}`)),
+	}, nil
+}
+
+func TestDo_UsesClientFromContext(t *testing.T) {
+	tr := &recordingTransport{}
+	ctx := httpx.WithClient(context.Background(), &http.Client{Transport: tr})
+
+	resp, err := Do(ctx, "test", func() (*http.Request, error) {
+		return http.NewRequest(http.MethodGet, "http://engine.invalid/", nil)
+	})
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	if got := atomic.LoadInt32(&tr.hits); got != 1 {
+		t.Fatalf("context client used %d times, want 1 (the retry loop ignored it)", got)
+	}
+}
 
 // setFastBackoff makes retries instant + deterministic for the test, restoring
 // the original hooks on cleanup.
