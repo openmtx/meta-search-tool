@@ -81,6 +81,10 @@ jobs:
     needs: pin-check
     env:
       CGO_ENABLED: "1"
+      # Build compatible arm64 wheels even when the hosted runner is a newer
+      # macOS (pip's tag would otherwise become macosx_26_0 and exclude older
+      # macOS releases).
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
       MST_VERSION: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
     strategy:
       fail-fast: false
@@ -177,4 +181,6 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+        # Recovery dispatches may rebuild an existing tag; skip files already on
+        # PyPI instead of failing the whole upload.
+        run: twine upload --skip-existing dist/*
