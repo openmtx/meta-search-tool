@@ -234,12 +234,13 @@ credentials; skipped silently if absent unless `--require`).
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `brave` | ❌ | `BRAVE_API_KEY` | Brave Search API; structured, block-resistant. **Anchor engine.** |
-| `mojeek` | ✅† | none (scrape) | Independent index, scrape-tolerant; paid/beta API exists. **Disabled by default** (SearXNG compat; enable with `mojeek.enabled: true` or `-e mojeek`). |
+| `mojeek` | ✅† | none (scrape) | Independent index; now serves an **Altcha proof-of-work CAPTCHA** and upstream SearXNG marks it `inactive`. **Disabled by default**; challenge pages are reported as an engine error (`mojeek: CAPTCHA challenge`). |
 
-> ⚠️ **Mojeek is HTML-scraped** — more scrape-tolerant than the Tier-C
-> engines, but inherently less reliable than an API. It is one of *two* keyless
-> general-web engines on by default (with `ddg`), so a keyless install has a
-> general-web fallback if either scrape breaks. Monitor scrape viability (§18).
+> ⚠️ **Mojeek is no longer reliably scrapeable.** As of v0.5 it serves an Altcha
+> PoW challenge; `mst` detects it and reports an error instead of a silent zero
+> result. The engine remains available for users who want to try it (or supply a
+> paid/beta API in a future sprint). It is **not** a keyless general-web fallback
+> by default. See §18.
 
 ### Tier B — knowledge & reference (free APIs; keyless; high grounding value)
 
@@ -261,9 +262,9 @@ engines in that category, and built-in group aliases for property-based selectio
 
 | Category | Engines |
 |----------|---------|
-| `general` | `brave`, `ddg`, `google` (triple-mode hybrid, on by default; keyless public CSE) |
+| `general` | `brave`, `ddg`, `google` (two-mode: official API or keyless public CSE), `jina` (keyed, Tier D) |
 | `reference` | `wikipedia`, `grokipedia` |
-| `academic` | `arxiv`, `pubmed` |
+| `academic` | `arxiv`, `pubmed`, `europepmc` |
 | `news` | `hackernews` ⚠️ (disabled by default) |
 | `q&a` | `stackexchange` |
 
@@ -283,6 +284,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 |--------|:-------:|------|-------|
 | `arxiv` | ✅ | none | CS/physics/math papers; free API. |
 | `pubmed` | ✅ | none | Biomedical literature; E-utilities API. |
+| `europepmc` | ✅ | none | Life-sciences literature and preprints; Europe PMC REST API; complements `pubmed` with OA/preprint links. |
 | `stackexchange` | ✅ | none (key optional) | Stack Overflow + network; technical Q&A. |
 | `hackernews` | ✅ | none | Tech news/discussion; Algolia API. **Disabled by default** (SearXNG compat; enable with `hackernews.enabled: true` or `-e hackernews`). |
 | `github` | ❌ | `GITHUB_TOKEN` | Code search. **Requires a token** — `/search/code` needs auth (unauthenticated, only `/search/repositories` works at low rates). v1.x; see §18. |
@@ -293,7 +295,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `ddg` (DuckDuckGo) | ✅ | none | HTML scrape; **best-effort** (see note). On by default. |
-| `google` | ✅ | `GOOGLE_API_KEY` (optional) + `GOOGLE_CX` (optional — built-in default CX for keyless public CSE) | Triple-mode hybrid: official REST API → public CSE (SearXNG-style, keyless, built-in CX) → HTML scrape fallback. On by default. |
+| `google` | ✅ | `GOOGLE_API_KEY` (optional) + `GOOGLE_CX` (optional — built-in default CX for keyless public CSE) | Two-mode: official REST API → public CSE (SearXNG-style, keyless, built-in CX). The HTML scrape fallback was retired in v0.5. On by default. |
 | `bing` | ❌ | `BING_API_KEY` | Bing Web Search v7 (keyed API). |
 
 ### Tier D — AI-oriented (answer/summary modes; under evaluation)
@@ -301,8 +303,10 @@ An unknown name (not an engine name, category, or alias) exits 2.
 | Engine | Keyless | Auth | Notes |
 |--------|:-------:|------|-------|
 | `tavily` | ❌ | `TAVILY_API_KEY` | AI-oriented results + answer mode (synthesized summary beyond the URL list). |
+| `jina` | ❌ | `JINA_API_KEY` | Jina AI Search (`s.jina.ai`); modes `reader` (default), `google`, `bing`; `respondWith=no-content` keeps responses small. LLM-oriented, opt-in. |
 
-`†` Mojeek is reached by scraping in v1 (its API is paid/beta); more scrape-tolerant than the Tier-C engines. See access notes below.
+`†` Mojeek is reached by scraping in v1 (its API is paid/beta); as of v0.5 it
+serves an Altcha CAPTCHA and is not a reliable fallback. See access notes below.
 
 > **DuckDuckGo note:** DDG has no public search API; the official Instant
 > Answer API is deprecated and of limited coverage. `mst` instead drives the
@@ -333,6 +337,11 @@ An unknown name (not an engine name, category, or alias) exits 2.
   header. General-result selectors (port to Go + goquery): container
   `ul.results-standard > li > a.ob`; url `a.ob/@href`; title `../h2/a`; snippet
   `..//p.s`. (Source: SearXNG `engines/mojeek.py`.)
+  **Challenge detection (v0.5):** Mojeek now serves an Altcha proof-of-work
+  CAPTCHA (`<title>Captcha</title>`, `altcha`, `/captcha/challenge`). Detect it
+  before parsing and return `mojeek: CAPTCHA challenge (Altcha proof-of-work)` —
+  never a silent `ok:true,count:0`. On a mid-pagination challenge, return the
+  accumulated results with the error (§7).
 - **`ddg` (HTML scrape, keyless):** `POST https://html.duckduckgo.com/html/`
   (no-JS form, `application/x-www-form-urlencoded`) with body `q=<query>&b=&kl=wt-wt`
   (page 1) and a browser `User-Agent` (rotated at random from a pool of common
@@ -352,8 +361,7 @@ An unknown name (not an engine name, category, or alias) exits 2.
   `https://grokipedia.com/page/<slug>` (html→text on snippet). No auth — the
   cleanest integration of the new engines. Caveat: upstream SearXNG marks it
   `inactive` (experimental); validate stability before relying on it.
-- **`google` (triple-mode hybrid):** searches via three modes in order of
-  precedence:
+- **`google` (two-mode hybrid):** searches via two modes in order of precedence:
   1. **Official REST API** (`GOOGLE_API_KEY` + `GOOGLE_CX` env vars both set):
      `GET https://www.googleapis.com/customsearch/v1?key=...&cx=...&q=...&num=...`
      (max 10 results per request). Requires a paid Google Cloud API key.
@@ -367,14 +375,24 @@ An unknown name (not an engine name, category, or alias) exits 2.
      Page size is 20 (SearXNG convention); data is capped at the search limit.
      Results map: `titleNoFormatting` → Title, `unescapedUrl` → URL,
      `contentNoFormatting` → Snippet.
-  3. **HTML scrape** (fallback when no CX available):
-     `GET https://www.google.com/search?q=...&start=...&filter=0`
-     with browser User-Agent (`Mozilla/5.0 Chrome/125`) and `CONSENT=YES+` cookie.
-     Parses `/url?q=` redirect links from `.g` divs. Detects CAPTCHA/sorry pages.
-- **JSON-API engines** (`wikipedia`, `arxiv`, `pubmed`, `stackexchange`,
-  `hackernews`, `grokipedia`) return structured results directly and are
-  preferred for reliability. **Scrape engines** (`mojeek`, `ddg`) parse HTML and
-  are best-effort.
+  **The HTML scrape fallback was retired in v0.5.** Google's normal web endpoint
+  now requires JavaScript and browser TLS impersonation; upstream SearXNG moved
+  to a WML/Nokia-UA request that Go's standard TLS stack could not use reliably
+  from our probes. CSE is the supported keyless path.
+- **`europepmc` (JSON, keyless):** `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search`
+  with `format=json&resultType=core&pageSize=25&cursorMark=<cursor>`. Uses
+  `nextCursorMark` within one `Search` call to fill the fetch limit (max 100).
+  URL = `https://europepmc.org/article/{source}/{id}`; snippets prefer the
+  abstract (HTML→text), falling back to journal/year metadata.
+- **`jina` (JSON, keyed):** `GET https://s.jina.ai/?q=<q>&page=<n>&engine=reader&respondWith=no-content`
+  with `Authorization: Bearer <JINA_API_KEY>`. `engine` is configurable via
+  `engines.jina.engine` (`reader` default, `google`, `bing`). Results map
+  `data[].title`/`url`/`description`; pagination stops on an empty page.
+- **JSON-API engines** (`wikipedia`, `arxiv`, `pubmed`, `europepmc`,
+  `stackexchange`, `hackernews`, `grokipedia`, `jina`) return structured results
+  directly and are preferred for reliability. **Scrape engines** (`mojeek`,
+  `ddg`) parse HTML and are best-effort; `mojeek` now surfaces its Altcha
+  CAPTCHA as an error.
 
 **Rate limits.** Limits vary by engine and change over time; treat any numbers
 as approximate and verify against each engine's docs. Structured-API engines
@@ -434,7 +452,13 @@ engines:
   google:       { weight: 1.0, enabled: true,  api_key_env: GOOGLE_API_KEY, cx_env: GOOGLE_CX }  # cx_env optional (built-in default CX for keyless public CSE)
   bing:         { weight: 1.0, enabled: false, api_key_env: BING_API_KEY }
   tavily:       { weight: 1.2, enabled: false, api_key_env: TAVILY_API_KEY }
+  europepmc:    { weight: 1.1, enabled: true,  timeout: 5s }
+  jina:         { weight: 1.1, enabled: false, api_key_env: JINA_API_KEY, engine: reader }  # reader|google|bing
 ```
+
+- **Per-engine options.** `engines.tavily.include_answer`/`search_depth` and
+  `engines.jina.engine` are optional; they are zero-valued/ignored by engines
+  that do not use them.
 
 - **`version` is enforced.** The config must declare `version: 1` (the only
   supported value). An omitted, unknown, or mismatched version is a config error
@@ -575,6 +599,12 @@ from the same native-rank depth).
      weighted score* for that URL; on a tie, take the engine that comes first by
      registration name (consistent with the `engines[]` ordering above). Multi-
      engine snippet concatenation is deferred (§18).
+   - **text normalization:** collapse whitespace runs, cap titles at **200**
+     characters and snippets at **1200** characters (word-boundary truncation
+     with `" …"`), and drop a snippet identical to the title. These caps are
+     applied at the rank/output boundary (merged and `--no-merge`); `--raw`
+     native payloads are untouched. This keeps JSON/JSONL context bounded for
+     LLMs without changing ranking.
 4. **Final sort** by `score` descending; ties broken by (a) number of
    contributing engines, then (b) registration order of the highest-contributing
    engine, then (c) canonical URL. All tie-breakers are deterministic, so the
@@ -612,6 +642,8 @@ from the same native-rank depth).
 ```
 
 **Field semantics (all formats):**
+- `title`/`snippet` — whitespace-normalized and capped at 200/1200 characters
+  (§9); `--raw` is exempt.
 - `schema` — output envelope version (currently `1`). Present only in the `json`
   envelope (not on `jsonl` items, which have no envelope). Bumped on breaking
   changes to the envelope/result shape; additive fields are non-breaking and do
@@ -692,11 +724,13 @@ would need a different merge strategy and is deferred (§18).
 ## 12. Security
 
 - API keys **only** read from env vars or config; never logged.
-- User-Agent: **structured-API engines** send `mst/<version>` — an honest,
-  identifiable UA. Trade-off: it is trivially blockable (a single filter denies
-  `mst/*`), accepted because the API engines don't filter on UA. **Scrape
-  engines** are exempted and may send a realistic browser UA — **rotated at
-  random from a pool of common browser/OS combinations**, so requests spread
+- User-Agent: **structured-API engines** send a contactable `mst/<version>
+  (+https://github.com/openmtx/meta-search-tool)` UA — an honest, identifiable
+  identity with a project URL, matching the contactable-UA policy Wikimedia and
+  other API providers now require. Trade-off: it is trivially blockable (a single
+  filter denies `mst/*`), accepted because the API engines don't filter on UA.
+  **Scrape engines** are exempted and may send a realistic browser UA — **rotated
+  at random from a pool of common browser/OS combinations**, so requests spread
   across the target's per-UA reputation buckets rather than always using one —
   plus the `Sec-Fetch-*`/`Referer` headers a real browser sends, because some
   scraped endpoints bot-block identifying/non-browser UAs. `ddg` does so — a
@@ -704,9 +738,9 @@ would need a different merge strategy and is deferred (§18).
   `ddg` access notes in §5 and `docs/DDG-research.md`) — picks one UA per query
   (so a future `vqd` multi-page sequence reuses it across that query's pages),
   and detects the embedded CAPTCHA challenge, reporting it as an engine error
-  rather than silently returning zero results. `mojeek` keeps the honest UA for
-  now (it is scrape-tolerant, and disabled by default). Making the UA user-configurable
-  (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
+  rather than silently returning zero results. `mojeek` uses the contactable API
+  UA but now detects Mojeek's Altcha challenge as an error. Making the UA
+  user-configurable (`MST_USER_AGENT` / `http.user_agent`) is deferred (§18).
 - Outbound requests limited to configured engine endpoints; no arbitrary URLs.
 - TLS verification always on; no option to disable.
 
@@ -730,7 +764,10 @@ would need a different merge strategy and is deferred (§18).
   reordering) — both are pure functions with clear invariants, ideal targets.
 - CLI: table-driven tests exercising flag parsing and config precedence.
 - Optional integration tests gated behind an env var (`MST_ITEST=1`)
-  hitting live keyless engines (`ddg`, `wikipedia`).
+  hitting live keyless engines (`ddg`, `wikipedia`, `europepmc`). A blocked
+  scrape (CAPTCHA/HTTP 403/429 from an IP with poor reputation) is **environmental**:
+  the probe should log and skip, not fail the suite. Deterministic `httptest`
+  fixtures remain the regression signal for parsing/headers.
 
 ## 15. Project Layout (Go)
 
@@ -776,6 +813,13 @@ meta-search-tool/
   wrapper can consume it), `--fields` (result projection to trim context),
   `--dry-run` (resolve config/flags/engines and print the plan without
   searching).
+- **v0.5 (upstream alignment & LLM hardening):** Mojeek Altcha CAPTCHA
+  detection + inactive contract; DDG live-reliability probe/UA decision;
+  contactable API User-Agent; Brave `Cache-Control: no-cache`; retire Google's
+  HTML scrape fallback (API + public CSE only); add keyless `europepmc` (Tier B)
+  and keyed `jina` (Tier D); cap/normalize output text (200/1200); release
+  invariant enforcing the skill pin == tag; Python `search_async()` wrapper +
+  thread/concurrency/cancellation tests.
 - **v1.0:** stable CLI/schema; full engine set; docs; **packaged releases** —
   GitHub Releases with an OS/arch matrix (linux/macOS/Windows × amd64/arm64),
   `SHA256SUMS` for verification, and `go install` available. Code
@@ -800,13 +844,16 @@ meta-search-tool/
    The underlying default-enabled set mostly follows SearXNG's defaults, with
    google enabled as an exception (public CSE token mode works keyless via the
    built-in CX):
-   - **Enabled by default:** `wikipedia`, `arxiv`, `pubmed`, `stackexchange`,
-     `brave` (auto-skips if no key), `ddg` (keyless general-web, SearXNG-mechanism
-     scrape), `google` (triple-mode hybrid; keyless via public CSE with built-in CX).
-   - **Disabled by default:** `mojeek` (SearXNG compat), `hackernews` (SearXNG
-     compat), `grokipedia` (SearXNG — inactive/experimental), `bing` (disabled
-     in SearXNG), `tavily` (not in SearXNG, opt-in).
-   - All keyed/paid engines (`bing`, `tavily`) are opt-in until enabled with keys.
+   - **Enabled by default:** `wikipedia`, `arxiv`, `pubmed`, `europepmc`,
+     `stackexchange`, `brave` (auto-skips if no key), `ddg` (keyless
+     general-web, SearXNG-mechanism scrape), `google` (two-mode hybrid; keyless
+     via public CSE with built-in CX).
+   - **Disabled by default:** `mojeek` (upstream inactive — Altcha CAPTCHA),
+     `hackernews` (SearXNG compat), `grokipedia` (SearXNG —
+     inactive/experimental), `bing` (disabled in SearXNG), `tavily` and `jina`
+     (not in SearXNG / keyed AI providers, opt-in).
+   - All keyed/paid engines (`bing`, `tavily`, `jina`) are opt-in until enabled
+     with keys.
    Default *weights* follow the §5 tiers (high for reliable/structured), so a fresh
    install is useful for LLM grounding without per-call tuning.
 4. **RRF constant `k`:** `60` default, tunable per call via `--rrf-k`.
@@ -853,10 +900,12 @@ Tracked explicitly so they don't get lost:
   coalescing are deferred (ambiguous path-vs-query semantics; mobile hosts may
   differ in content). The tracking-param set is fixed in v1; making it
   user-configurable is deferred.
-- **HTTP User-Agent:** structured-API engines fixed to `mst/<version>` (§12);
+- **HTTP User-Agent:** structured-API engines send the contactable
+  `mst/<version> (+https://github.com/openmtx/meta-search-tool)` UA (§12);
   scrape engines send a realistic browser UA **rotated from a pool** (§12
-  carve-out — `ddg`; `mojeek` keeps the honest UA for now (disabled by default). Making the UA
-  user-configurable (`MST_USER_AGENT` / `http.user_agent`) remains deferred.
+  carve-out — `ddg`). `mojeek` uses the contactable UA and detects Altcha
+  challenges. Making the UA user-configurable (`MST_USER_AGENT` /
+  `http.user_agent`) remains deferred.
 - **Domain boosts:** deferred to post-v1; design how they interact with RRF.
 - **Search profiles (§19):** **term resolved → `--profile`** (shorter, less
   jargony than `--topic`/`--vertical`); still open — whether profiles are
@@ -866,13 +915,17 @@ Tracked explicitly so they don't get lost:
   flag set as JSON so a harness or tool wrapper can consume it), `--fields`
   (result projection to trim context). (Engine group aliases `free`/`keyed`/`all`
   implemented in v0.2, Sprint B.3.1.)
-- **Engine access models to verify (§5):** `mojeek` (monitor scrape viability —
-  disabled by default but still tested live with `MST_ITEST=1`; consider the
-  paid/beta API path if scraping breaks), `reddit` (spec OAuth env vars + endpoints before implementing),
+- **Engine access models to verify (§5):** `mojeek` (resolved in v0.5: Altcha
+  CAPTCHA detected; upstream `inactive`; paid/beta API is the only reliable
+  path), `reddit` (spec OAuth env vars + endpoints before implementing),
   `grokipedia` (validate stability — upstream SearXNG marks it `inactive`/
   experimental; ship `enabled: false` until confirmed). (`github` is resolved:
   `/search/code` **requires** a token — §5.) Confirm each before committing it to
   a version.
+- **Google HTML scrape:** retired in v0.5. Google's normal web endpoint needs
+  JavaScript/browser TLS impersonation, and the upstream WML/Nokia path failed
+  from our Go/curl probes (HTTP 403). CSE remains the keyless path; revisit only
+  with a TLS-impersonation transport.
 - **AI-oriented answer/summary output (§5 Tier D):** Tavily's answer mode returns
   a synthesized summary beyond the URL list — decide whether such an "answer"
   composes with RRF at all, or belongs in a separate output field. (`grokipedia`'s
@@ -889,7 +942,7 @@ concrete profiles to ship:
 
 - `general` → `brave`, (`ddg`)
 - `developer` → `github`, `stackexchange`, `hackernews` (disabled by default)
-- `academic` → `arxiv`, `pubmed`
+- `academic` → `arxiv`, `pubmed`, `europepmc`
 - `community` → `reddit`, `hackernews` (disabled by default)
 
 **Encyclopedic reference** (`wikipedia`, `grokipedia`) is **cross-cutting** —

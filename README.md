@@ -56,13 +56,13 @@ Example output:
    [GitHub Releases](https://github.com/openmtx/meta-search-tool/releases).
    Archives are named `mst-<tag>-<os>-<arch>.tar.gz` (Linux/macOS) or `.zip`
    (Windows), where `os` is `linux`, `darwin`, or `windows` and `arch` is
-   `amd64` or `arm64` — e.g. `mst-v0.3.0-linux-amd64.tar.gz`.
+   `amd64` or `arm64` — e.g. `mst-v0.5.0-linux-amd64.tar.gz`.
 2. Extract and put `mst` on your PATH:
 
    ```bash
-   tar xzf mst-v0.3.0-linux-amd64.tar.gz
+   tar xzf mst-v0.5.0-linux-amd64.tar.gz
    mkdir -p ~/.local/bin
-   install -m 0755 mst-v0.3.0-linux-amd64/mst ~/.local/bin/mst   # any dir on $PATH
+   install -m 0755 mst-v0.5.0-linux-amd64/mst ~/.local/bin/mst   # any dir on $PATH
    ```
 
    On Windows, unzip the archive and move `mst.exe` to a directory on `%PATH%`.
@@ -82,7 +82,7 @@ go install github.com/openmtx/meta-search-tool/cmd/mst@latest
 ### Verify
 
 ```bash
-mst --version        # e.g. mst v0.3.0
+mst --version        # e.g. mst v0.5.0
 mst --list-engines   # engines, status, effective weights
 ```
 
@@ -108,15 +108,15 @@ mst --list-engines   # engines, status, effective weights
 
 ## Status
 
-**v0.3** — 12 engines across 4 reliability tiers, 500+ tests, all spec flags
+**v0.5** — 14 engines across 4 reliability tiers, 500+ tests, all spec flags
 implemented, `-race` clean.
 
 | Tier | Engines |
 |------|---------|
-| **A** — reliable general web | `brave` (keyed), `mojeek` (keyless), `ddg` (keyless, on by default) |
-| **B** — knowledge & reference | `wikipedia`, `arxiv`, `pubmed`, `stackexchange`, `hackernews`, `grokipedia` |
-| **C** — scraped general web | `google` (hybrid API + public CSE + scrape), `bing` (keyed) |
-| **D** — AI-oriented | `tavily` (keyed, with `include_answer`/`search_depth`) |
+| **A** — reliable general web | `brave` (keyed), `mojeek` (keyless; Altcha CAPTCHA detected, disabled), `ddg` (keyless, on by default) |
+| **B** — knowledge & reference | `wikipedia`, `arxiv`, `pubmed`, `europepmc`, `stackexchange`, `hackernews`, `grokipedia` |
+| **C** — general web | `google` (official API + public CSE), `bing` (keyed) |
+| **D** — AI-oriented | `tavily` (keyed), `jina` (keyed) |
 
 See [`docs/SPEC.md`](./docs/SPEC.md) for full design details.
 
@@ -135,13 +135,14 @@ conventions to reduce surprise for users familiar with it.
 
 `mst` is not a SearXNG replacement or fork. We made different trade-offs:
 
-- **One Google, not three.** SearXNG ships three separate Google "engines"
-  (`google` — HTML scrape, `google_cse` — public CSE token, `google_api` —
-  official API). `mst` merges all three into a single `google` engine with
-  automatic mode selection (official API → public CSE → HTML scrape), so a
-  Google search is always a Google search.
-- **Tavily.** `mst` adds an AI-oriented search engine (`tavily`) that returns
-  a synthesized answer alongside URL results — something SearXNG doesn't have.
+- **One Google, not several.** SearXNG ships separate Google "engines"
+  (`google`, `google_cse`, API variants). `mst` merges the usable paths into a
+  single `google` engine with automatic mode selection (official API → public
+  CSE), so a Google search is always a Google search. The HTML scrape fallback
+  was retired in v0.5.
+- **AI-oriented providers.** `mst` adds `tavily` (answer mode) and `jina`
+  (AI search) alongside the keyless knowledge engines — options SearXNG does
+  not provide.
 
 `mst` is a complementary CLI-first tool inspired by the same problems SearXNG
 solves, optimized for scriptable use and agent-driven workflows.
