@@ -82,6 +82,30 @@ def test_search_invalid_timeout_raises_usage():
     assert exc.value.exit_code == 2
 
 
+def test_search_invalid_proxy_raises_usage():
+    # An unsupported scheme must fail before any request is made (§6).
+    with pytest.raises(mst.MSTError) as exc:
+        mst.search("go", proxy="ftp://proxy.example:21")
+    assert exc.value.code == "usage"
+    assert exc.value.exit_code == 2
+
+
+def test_search_invalid_proxy_does_not_leak_credentials():
+    with pytest.raises(mst.MSTError) as exc:
+        mst.search("go", proxy="ftp://user:hunter2@proxy.example:21")
+    assert "hunter2" not in exc.value.message
+
+
+def test_search_none_and_empty_proxy_accepted():
+    # Empty/None must not be treated as an invalid proxy URL. An unknown engine
+    # fails before any network call, keeping this deterministic.
+    for proxy in (None, ""):
+        with pytest.raises(mst.MSTError) as exc:
+            mst.search("go", engines=["no-such-engine"], proxy=proxy)
+        assert exc.value.code == "usage"
+        assert "proxy" not in exc.value.message.lower()
+
+
 def test_mst_error_carries_fields_and_str():
     try:
         mst.search("")
@@ -148,6 +172,7 @@ def test_search_async_forwards_arguments_and_returns_same_shape(monkeypatch):
             rrf_k=42,
             timeout="5s",
             weights={"wikipedia": 2.0},
+            proxy="http://127.0.0.1:3128",
         )
     )
     assert got == {"schema": 1, "query": "q", "results": []}
@@ -161,6 +186,7 @@ def test_search_async_forwards_arguments_and_returns_same_shape(monkeypatch):
                 "rrf_k": 42,
                 "timeout": "5s",
                 "weights": {"wikipedia": 2.0},
+                "proxy": "http://127.0.0.1:3128",
             },
         )
     ]
@@ -309,3 +335,50 @@ def test_search_async_live_concurrent():
     for res in results:
         assert isinstance(res, dict)
         assert isinstance(res.get("results"), list)
+
+
+# --- proxy (live, gated) ----------------------------------------------------
+
+
+@LIVE
+def test_search_live_proxy_is_used_and_never_falls_back_to_direct():
+    """A rejecting local proxy proves the per-call proxy carries the traffic.
+
+    If the binding fell back to direct egress the search would succeed and the
+    proxy would see nothing, so both assertions matter (§6, DECISIONS 2026-11-12).
+    """
+    import http.server
+    import threading
+
+    hits = []
+
+    class RejectingProxy(http.server.BaseHTTPRequestHandler):
+        def do_CONNECT(self):  # HTTPS engines tunnel via CONNECT
+            hits.append(self.path)
+            self.send_error(502)
+
+        def do_GET(self):  # HTTP engines use absolute-form requests
+            hits.append(self.path)
+            self.send_error(502)
+
+        def log_message(self, *args):  # keep pytest output clean
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RejectingProxy)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        proxy = f"http://127.0.0.1:{server.server_address[1]}"
+        with pytest.raises(mst.MSTError) as exc:
+            mst.search(
+                "rust async runtime",
+                engines=["wikipedia"],
+                limit=3,
+                timeout="5s",
+                proxy=proxy,
+            )
+        assert exc.value.code in {"engine_failure", "no_results"}
+        assert hits, "no request reached the proxy (traffic did not use it)"
+    finally:
+        server.shutdown()
+        server.server_close()

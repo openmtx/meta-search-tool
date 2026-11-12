@@ -27,6 +27,7 @@ async def search_async(
     rrf_k: int = 60,
     timeout: str = "8s",
     weights=None,
+    proxy=None,
 ) -> dict:
     """Async wrapper around :func:`search`.
 
@@ -47,6 +48,7 @@ async def search_async(
         rrf_k=rrf_k,
         timeout=timeout,
         weights=weights,
+        proxy=proxy,
     )
 
 # Reflect the installed distribution version (populated by setup.py from the

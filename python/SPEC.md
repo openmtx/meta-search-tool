@@ -122,9 +122,16 @@ char* MSTSearch(
     int offset,                  // skip first N results (0 = no skip)
     int rrf_k,                   // RRF smoothing constant (use 60 for default)
     const char* timeout_str,     // duration string, e.g. "8s"
-    const char* weights_json     // JSON object: {"brave":2.0,"ddg":1.0}, "{}" = none
+    const char* weights_json,    // JSON object: {"brave":2.0,"ddg":1.0}, "{}" = none
+    const char* proxy            // proxy URL; "" = environment behavior (v0.6)
 );
 ```
+
+**ABI note (v0.6):** `proxy` is appended at the end of the argument list. The
+wheel always ships the matching `_mst.so` and Cython extension together, so the
+Python surface is unaffected. The C ABI is **not** a stable standalone contract —
+C callers must be rebuilt against the matching header. `MSTListEngines` and
+`MSTFreeResult` are unchanged.
 
 **Returns:** JSON matching the `format.Envelope` schema (§10):
 
@@ -179,7 +186,7 @@ Frees a result string returned by `MSTSearch` or `MSTListEngines`.
 
 ## Python API (`mst`)
 
-### `search(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None) → dict`
+### `search(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None, proxy=None) → dict`
 
 Execute a meta-search query.
 
@@ -192,6 +199,7 @@ Execute a meta-search query.
 | `rrf_k` | `int` | `60` | RRF smoothing constant; smaller = more top-heavy |
 | `timeout` | `str` | `"8s"` | Global timeout, e.g. `"5s"`, `"500ms"` |
 | `weights` | `dict[str, float] \| None` | `None` | Per-engine weight overrides, e.g. `{"brave": 2.0}` |
+| `proxy` | `str \| None` | `None` | Per-call outbound proxy, e.g. `"http://127.0.0.1:8080"` or `"socks5h://user:pass@host:1080"`. `None`/`""` keeps the environment behavior (`HTTP_PROXY`/`HTTPS_PROXY`). See "Outbound proxy". |
 
 **Returns:** `dict` matching the `format.Envelope` schema (parsed JSON).
 
@@ -221,9 +229,32 @@ result = mst.search(
 
 # Pagination
 result = mst.search("deep learning", offset=10, limit=5)
+
+# Route this call through a proxy (host-configured, per call)
+result = mst.search("rust async runtime", proxy="socks5h://127.0.0.1:1080")
 ```
 
-### `await search_async(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None) → dict`
+### Outbound proxy (`proxy=`)
+
+`proxy` is **per call** and applies to every engine request in that search.
+There is no global setter and the library never mutates `os.environ`.
+
+| Value | Behavior |
+|---|---|
+| `None` or `""` | Unchanged: standard `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment behavior. |
+| `"http://host:port"` / `"https://host:port"` | HTTP CONNECT proxy for all engine traffic. |
+| `"socks5://…"` / `"socks5h://…"` | SOCKS5 proxy; DNS resolves at the proxy (remote) in both forms. |
+| Credentials | Allowed in the URL (`scheme://user:pass@host:port`); never logged or echoed in errors. |
+
+An explicit `proxy` wins even if `NO_PROXY` matches the destination — it is an
+explicit instruction and is never silently bypassed. If the proxy is unreachable
+the engines report errors (`ok: false` in the envelope); it never falls back to
+direct egress, and with nothing else succeeding the call raises
+`MSTError(code="no_results", exit=1)` (the CLI exits `3` with `--strict`). An
+invalid URL or unsupported scheme raises `MSTError(code="usage", exit=2)` before
+any request is made.
+
+### `await search_async(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None, proxy=None) → dict`
 
 Async wrapper around `search()`. It accepts and forwards the same arguments,
 returns the same envelope, and raises the same `MSTError`. Implementation is a
@@ -476,8 +507,6 @@ Tests run via: `pytest python/tests/`
 
 ## Future Extensions
 
-- **`search_async()`** — async variant using Python's `asyncio.to_thread()` wrapper
-  around the synchronous CGO call (releases GIL during Go execution).
 - **Streaming** — expose per-engine results as they arrive (requires modifying the
   dispatch loop to emit partial results).
 - **Config file support** — read `$MST_CONFIG_HOME/config.yaml` or

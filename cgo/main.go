@@ -48,9 +48,13 @@ func main() {
 //   - rrf_k: RRF smoothing constant (use 60 for default)
 //   - timeout_str: duration string, e.g. "8s"
 //   - weights_json: JSON object of per-engine weights, "{}" = none
+//   - proxy: per-run proxy URL (http/https/socks5/socks5h), "" = environment
+//
+// Appending proxy is a v0.6 ABI change: the Python wheel always ships the
+// matching _mst.so, but standalone C callers must rebuild against the new header.
 //
 //export MSTSearch
-func MSTSearch(query *C.char, enginesCSV *C.char, limit, offset, rrfK int, timeoutStr *C.char, weightsJSON *C.char) *C.char {
+func MSTSearch(query *C.char, enginesCSV *C.char, limit, offset, rrfK int, timeoutStr *C.char, weightsJSON *C.char, proxy *C.char) *C.char {
 	q := C.GoString(query)
 	if strings.TrimSpace(q) == "" {
 		return cstr(`{"error":{"code":"usage","message":"empty query","exit":2}}`)
@@ -93,6 +97,7 @@ func MSTSearch(query *C.char, enginesCSV *C.char, limit, offset, rrfK int, timeo
 		RRFK:    rrfK,
 		Timeout: globalTo,
 		Weights: weights,
+		Proxy:   C.GoString(proxy),
 	}
 
 	result, err := cgoapi.Search(q, opts)

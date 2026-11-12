@@ -30,6 +30,7 @@ _lib.MSTSearch.argtypes = [
     ctypes.c_int,     # rrf_k
     ctypes.c_char_p,  # timeout_str
     ctypes.c_char_p,  # weights_json
+    ctypes.c_char_p,  # proxy (v0.6)
 ]
 _lib.MSTSearch.restype = ctypes.c_void_p
 
@@ -74,6 +75,7 @@ def search(
     rrf_k: int = 60,
     timeout: str = "8s",
     weights=None,
+    proxy=None,
 ) -> dict:
     """Execute a meta-search query via CGO.
 
@@ -85,6 +87,9 @@ def search(
         rrf_k: RRF smoothing constant (use 60 for default).
         timeout: Duration string, e.g. "8s".
         weights: Per-engine weight overrides as dict, e.g. {"brave": 2.0}.
+        proxy: Per-call outbound proxy URL (http/https/socks5/socks5h). None or
+            "" keeps the HTTP_PROXY/HTTPS_PROXY environment behavior. An invalid
+            URL raises MSTError(code="usage", exit_code=2).
 
     Returns:
         Dict matching the format.Envelope schema.
@@ -94,6 +99,8 @@ def search(
     """
     engines_csv = ",".join(engines) if engines else ""
     weights_json = json.dumps(weights).encode() if weights else b"{}"
+    # An explicit proxy is per call; never fall back to the environment once set.
+    proxy_csv = (proxy or "").encode()
 
     result = _call_cgo(
         _lib.MSTSearch,
@@ -104,6 +111,7 @@ def search(
         rrf_k,
         timeout.encode(),
         weights_json,
+        proxy_csv,
     )
 
     # Check for error envelope

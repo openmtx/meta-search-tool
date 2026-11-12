@@ -56,7 +56,7 @@ print(result)
 
 ## API
 
-### `mst.search(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None)`
+### `mst.search(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None, proxy=None)`
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -67,8 +67,19 @@ print(result)
 | `rrf_k` | `int` | `60` | RRF smoothing constant |
 | `timeout` | `str` | `"8s"` | Per-engine timeout duration |
 | `weights` | `dict[str, float]` or `None` | `None` | Per-engine weight overrides |
+| `proxy` | `str` or `None` | `None` | Per-call outbound proxy (`http`, `https`, `socks5`, `socks5h`); `None`/`""` keeps `HTTP_PROXY`/`HTTPS_PROXY` behavior |
 
 Returns a dict with `query`, `took_ms`, `results` (list of ranked results).
+
+Route a call through the host's proxy without touching the process environment:
+
+```python
+result = mst.search("rust async runtime", proxy="socks5h://127.0.0.1:1080")
+```
+
+An explicit `proxy` is never silently bypassed (it wins over `NO_PROXY`) and
+never falls back to direct egress if the proxy is unreachable. An invalid URL or
+unsupported scheme raises `MSTError(code="usage", exit_code=2)`.
 
 ### `await mst.search_async(...)`
 

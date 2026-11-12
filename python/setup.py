@@ -15,6 +15,7 @@ import platform as _platform
 
 CGO_DIR = Path(__file__).parent.parent / "cgo"
 PYTHON_SRC = Path(__file__).parent / "src"
+REPO_ROOT = Path(__file__).parent.parent
 
 # Platform-specific shared library name for Go's -buildmode=c-shared.
 # Linux/macOS: .so (ELF/DYLIB). Windows: .dll (PE/COFF).
@@ -57,9 +58,23 @@ def resolve_version():
     return raw[1:] if raw.startswith("v") else raw
 
 
+def cgo_is_stale(lib):
+    """True when any Go source or module file is newer than the built library.
+
+    Without this, editing the C ABI (e.g. adding MSTSearch's proxy argument)
+    leaves an old `_mst.so` in place and the extension silently calls a stale
+    signature — the mismatch only shows up as wrong behavior, not a build error.
+    """
+    lib_mtime = lib.stat().st_mtime
+    sources = [CGO_DIR / "go.mod", CGO_DIR / "go.sum", REPO_ROOT / "go.mod", REPO_ROOT / "go.sum"]
+    sources.extend(CGO_DIR.glob("*.go"))
+    sources.extend((REPO_ROOT / "internal").rglob("*.go"))
+    return any(p.exists() and p.stat().st_mtime > lib_mtime for p in sources)
+
+
 def build_cgo():
     """Build the CGO shared library from the Go codebase."""
-    if CGO_LIB.exists():
+    if CGO_LIB.exists() and not cgo_is_stale(CGO_LIB):
         return
 
     print(f"[mst] Building CGO library from {CGO_DIR}...")
