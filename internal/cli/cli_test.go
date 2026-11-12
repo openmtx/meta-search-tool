@@ -110,6 +110,16 @@ func TestParse_PerEngineTimeout(t *testing.T) {
 	}
 }
 
+func TestParse_ProxyFlag(t *testing.T) {
+	flags, err := Parse([]string{"--proxy", "socks5h://user:pass@127.0.0.1:1080", "q"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if flags.Proxy != "socks5h://user:pass@127.0.0.1:1080" {
+		t.Errorf("Proxy = %q, want the flag value", flags.Proxy)
+	}
+}
+
 func TestParse_ShortFlags(t *testing.T) {
 	// -e/-n/-f/-q are aliases of --engine/--limit/--format/--query (spec §4).
 	flags, err := Parse([]string{"-e", "brave,ddg", "-n", "5", "-f", "jsonl", "-q", "query"}, io.Discard)
@@ -196,7 +206,7 @@ func TestParse_Help_GroupedByTier(t *testing.T) {
 	}
 	// Every registered flag should still be documented somewhere.
 	for _, flag := range []string{"--query", "--engine", "--exclude", "--limit", "--format", "--fields", "--weight",
-		"--rrf-k", "--require", "--strict", "--timeout",
+		"--rrf-k", "--require", "--strict", "--timeout", "--proxy",
 		"--raw", "--no-merge", "--per-engine-timeout", "--config", "-v", "--verbose"} {
 		if !strings.Contains(s, flag) {
 			t.Errorf("--help missing flag %q", flag)

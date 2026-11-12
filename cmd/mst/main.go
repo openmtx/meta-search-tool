@@ -127,6 +127,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, reg *engine.R
 	ctx, cancel := context.WithTimeout(context.Background(), p.GlobalTo)
 	defer cancel()
 
+	// Per-run outbound proxy (§6): an explicit --proxy wins over the environment
+	// and is never silently bypassed. An invalid URL is a usage error, raised
+	// before any request is made.
+	ctx, proxyCleanup, proxyErr := cgoapi.ContextWithProxy(ctx, flags.Proxy)
+	if proxyErr != nil {
+		emitError(stderr, format.ErrCodeUsage, proxyErr.Error(), 2)
+		return 2
+	}
+	defer proxyCleanup()
+
 	requireSet := cgoapi.SetOf(flags.Require)
 
 	// --raw: bypass normalization; emit each engine's parsed native payload

@@ -181,6 +181,36 @@ func TestRun_Exit2_BadFlag(t *testing.T) {
 	assertStructuredError(t, errs, format.ErrCodeUsage, 2)
 }
 
+func TestRun_Exit2_InvalidProxy(t *testing.T) {
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	for _, proxy := range []string{"not a url", "ftp://proxy.example:21", "http://user:hunter2@"} {
+		code, out, errs := runWith(t, []string{"--proxy", proxy, "q"}, reg, "")
+		if code != 2 {
+			t.Fatalf("--proxy %q: exit = %d, want 2; stderr=%s", proxy, code, errs)
+		}
+		if out != "" {
+			t.Errorf("--proxy %q: exit-2 must write nothing to stdout, got %q", proxy, out)
+		}
+		assertStructuredError(t, errs, format.ErrCodeUsage, 2)
+		if strings.Contains(errs, "hunter2") {
+			t.Errorf("--proxy %q: error leaked credentials: %s", proxy, errs)
+		}
+	}
+}
+
+func TestRun_ProxyFlagAccepted(t *testing.T) {
+	// The fake engines make no HTTP calls, so this only proves the flag resolves
+	// and does not disturb the run (proxy routing is covered in cgoapi tests).
+	reg := newReg(eng("a", r("t", "https://x/1")))
+	code, out, errs := runWith(t, []string{"--proxy", "http://127.0.0.1:3128", "q"}, reg, "")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errs)
+	}
+	if !strings.Contains(out, `"schema"`) {
+		t.Errorf("expected a JSON envelope, got %q", out)
+	}
+}
+
 func TestRun_Exit2_UnknownEngine(t *testing.T) {
 	reg := newReg(eng("a", r("t", "https://x/1")))
 	code, out, errs := runWith(t, []string{"--engine", "bogus", "q"}, reg, "")

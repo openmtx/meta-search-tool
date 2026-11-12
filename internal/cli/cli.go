@@ -34,6 +34,7 @@ type Flags struct {
 	Require          []string
 	Strict           bool
 	Timeout          string
+	Proxy            string // --proxy: per-run outbound proxy URL (§6)
 	PerEngineTimeout string
 	NoMerge          bool
 	Raw              bool
@@ -97,6 +98,7 @@ func Parse(args []string, out io.Writer) (*Flags, error) {
 	fs.BoolVar(&f.Strict, "strict", false, "Exit 3 if any engine that ran failed or timed out")
 	fs.IntVar(&f.RRFK, "rrf-k", 60, "RRF smoothing constant; smaller = more top-heavy")
 	fs.StringVar(&f.Timeout, "timeout", "8s", "Global timeout for the run (e.g. 5s, 500ms)")
+	fs.StringVar(&f.Proxy, "proxy", "", "Route outbound engine requests through a proxy URL (http, https, socks5, socks5h)")
 
 	// Tier 3 — debug/internal.
 	fs.StringVar(&f.PerEngineTimeout, "per-engine-timeout", "", "Per-engine timeout (defaults to min(--timeout, 6s))")
@@ -212,7 +214,7 @@ var helpTiers = []struct {
 	},
 	{
 		header: "Tier 2 — tuning (documented, discouraged for routine skill use)",
-		flags:  []string{"rrf-k", "require", "strict", "timeout"},
+		flags:  []string{"rrf-k", "require", "strict", "timeout", "proxy"},
 	},
 	{
 		header: "Tier 3 — debug/internal (humans; an LLM should not need these)",
