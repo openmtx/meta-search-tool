@@ -2,6 +2,7 @@ package mojeek
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,50 @@ const mockHTML = `<!DOCTYPE html>
 </ul>
 </body>
 </html>`
+
+// captchaHTML mimics Mojeek's Altcha challenge page: HTTP 200, no
+// results-standard list, and explicit Altcha markers.
+const captchaHTML = `<!DOCTYPE html>
+<html>
+<head><title>Captcha</title></head>
+<body>
+<form id="challenge-form" action="/captcha/verify">
+  <div class="altcha" data-challenge="/captcha/challenge"></div>
+</form>
+</body>
+</html>`
+
+// tenResultsHTML returns a full results page (resultsPerPage hits), which
+// keeps pagination going so the next page can be a CAPTCHA.
+func tenResultsHTML() string {
+	var lis strings.Builder
+	lis.WriteString(`<ul class="results-standard">`)
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&lis, `<li><a class="ob" href="https://example.com/%d"></a><h2>T%d</h2><p class="s">s%d</p></li>`, i, i, i)
+	}
+	lis.WriteString(`</ul>`)
+	return lis.String()
+}
+
+func TestIsCaptchaPage(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"challenge", captchaHTML, true},
+		{"altcha marker", `<html><body>altcha</body></html>`, true},
+		{"captcha endpoint", `<html><body>/captcha/challenge</body></html>`, true},
+		{"normal results", mockHTML, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isCaptchaPage(tt.body); got != tt.want {
+				t.Errorf("isCaptchaPage() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestParseResults(t *testing.T) {
 	got, err := parseResults(mockHTML)
@@ -106,8 +151,8 @@ func TestParseResults_NoResultsStandard(t *testing.T) {
 func TestSearch_Httptest(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request headers.
-		if got := r.Header.Get("User-Agent"); got != userAgent {
-			t.Errorf("User-Agent = %q, want %q", got, userAgent)
+		if got := r.Header.Get("User-Agent"); got != engine.UserAgent() {
+			t.Errorf("User-Agent = %q, want %q", got, engine.UserAgent())
 		}
 		if got := r.Header.Get("Accept-Language"); got == "" {
 			t.Error("Accept-Language header missing")
@@ -183,6 +228,81 @@ func TestSearch_HTTPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "404") {
 		t.Errorf("error should mention 404: %v", err)
+	}
+}
+
+func TestSearch_Captcha(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(captchaHTML))
+	}))
+	defer ts.Close()
+
+	oldBase := scrapeBase
+	scrapeBase = ts.URL
+	defer func() { scrapeBase = oldBase }()
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 10})
+	if !errors.Is(err, ErrCaptcha) {
+		t.Fatalf("Search error = %v, want ErrCaptcha", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil results on CAPTCHA, got %d", len(results))
+	}
+}
+
+func TestSearchWithRaw_Captcha(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(captchaHTML))
+	}))
+	defer ts.Close()
+
+	oldBase := scrapeBase
+	scrapeBase = ts.URL
+	defer func() { scrapeBase = oldBase }()
+
+	e := New().(engine.RawEngine)
+	results, raw, err := e.SearchWithRaw(context.Background(), "q", engine.Options{Limit: 10})
+	if !errors.Is(err, ErrCaptcha) {
+		t.Fatalf("SearchWithRaw error = %v, want ErrCaptcha", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil results on CAPTCHA, got %d", len(results))
+	}
+	pages, ok := raw.([]string)
+	if !ok || len(pages) != 1 || !strings.Contains(pages[0], "altcha") {
+		t.Errorf("raw = %#v, want one challenge HTML page", raw)
+	}
+}
+
+// TestSearch_Pagination_PartialResultsOnCaptcha verifies §7: results fetched
+// before a later-page CAPTCHA are returned with ErrCaptcha, not discarded.
+func TestSearch_Pagination_PartialResultsOnCaptcha(t *testing.T) {
+	var count int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&count, 1) == 1 {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(tenResultsHTML()))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(captchaHTML))
+	}))
+	defer ts.Close()
+
+	oldBase := scrapeBase
+	scrapeBase = ts.URL
+	defer func() { scrapeBase = oldBase }()
+
+	e := New()
+	results, err := e.Search(context.Background(), "q", engine.Options{Limit: 100})
+	if !errors.Is(err, ErrCaptcha) {
+		t.Fatalf("Search error = %v, want ErrCaptcha", err)
+	}
+	if len(results) != 10 {
+		t.Errorf("expected 10 partial results, got %d", len(results))
 	}
 }
 

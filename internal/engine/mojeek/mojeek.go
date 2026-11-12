@@ -10,6 +10,7 @@ package mojeek
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,15 +25,28 @@ import (
 // scrapeBase is the Mojeek search URL. Tests override it via SetScrapeBase.
 var scrapeBase = "https://www.mojeek.com/search"
 
-// userAgent is the HTTP User-Agent sent to Mojeek (§12).
-const userAgent = "mst/dev"
-
 // maxPages caps pagination (§5: "max 10 pages, cap fetch at ~100").
 const maxPages = 10
 
 // resultsPerPage is Mojeek's default page size; fetching fewer than this on a
 // page signals the last page (stop paginating).
 const resultsPerPage = 10
+
+// ErrCaptcha is returned when Mojeek answers with its Altcha proof-of-work
+// challenge instead of a results page. Upstream SearXNG now marks Mojeek
+// inactive for this reason. Detecting it explicitly prevents the challenge page
+// from being misreported as a successful zero-result search.
+var ErrCaptcha = errors.New("mojeek: CAPTCHA challenge (Altcha proof-of-work)")
+
+// isCaptchaPage reports whether body is Mojeek's Altcha/CAPTCHA challenge page
+// rather than a results page. It is intentionally a cheap substring check: the
+// challenge page carries no results-standard list and is not worth parsing.
+func isCaptchaPage(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "<title>captcha") ||
+		strings.Contains(lower, "altcha") ||
+		strings.Contains(lower, "/captcha/challenge")
+}
 
 // ScrapeBase returns the current scrape base URL (for test restore).
 func ScrapeBase() string { return scrapeBase }
@@ -108,7 +122,7 @@ func (m *mojeek) fetch(ctx context.Context, q string, opts engine.Options) ([]en
 			if err != nil {
 				return nil, err
 			}
-			httpReq.Header.Set("User-Agent", userAgent)
+			httpReq.Header.Set("User-Agent", engine.UserAgent())
 			httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
 			return httpReq, nil
 		}
@@ -127,6 +141,13 @@ func (m *mojeek) fetch(ctx context.Context, q string, opts engine.Options) ([]en
 			return allResults, nonEmpty(pages), perr
 		}
 		pages = append(pages, body)
+
+		// A CAPTCHA page is a successful HTTP response but not a result set.
+		// Return the accumulated results plus a typed error (§7), never a
+		// silent ok:true/count:0.
+		if isCaptchaPage(body) {
+			return allResults, nonEmpty(pages), ErrCaptcha
+		}
 
 		results, perr := parseResults(body)
 		if perr != nil {
