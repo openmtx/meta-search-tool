@@ -775,24 +775,46 @@ would need a different merge strategy and is deferred (§18).
 meta-search-tool/
   docs/
     SPEC.md
+    searxng-upstream-delta-2026-11.md
   go.mod
-  cmd/mst/main.go
+  cmd/mst/main.go          # CLI entry: flags → plan → run → format
   internal/
-    config/        # discovery, load, precedence merge
-    engine/        # Engine interface + registry
-      retry/       # shared retry/backoff policy (§11) used by all HTTP engines
-      ddg/
-      wikipedia/
-      brave/
-      google/
-      bing/
-      tavily/
-    search/        # dispatcher: fan-out, wrap EngineRun, collector
-    rank/          # RRF scoring, dedup, sort
-    cli/           # flag parsing + config binding
-    format/        # output formatters: json, jsonl, text, table, raw, no-merge
-  testdata/
+    config/                # discovery, load, precedence merge
+    cli/                   # flag parsing, help tiers, config binding
+    cgoapi/                # shared CLI↔CGO core: plan resolution, RunMerged,
+                           #   list/exit computation, default registry
+    engine/                # Engine interface, registry, shared UA (§8)
+      retry/               # shared retry/backoff policy (§11) for all HTTP engines
+      arxiv/               # keyless Atom API
+      pubmed/              # keyless E-utilities
+      europepmc/           # keyless REST
+      stackexchange/       # keyless JSON API
+      hackernews/          # keyless Algolia API
+      wikipedia/           # keyless MediaWiki API
+      grokipedia/          # keyless JSON API (disabled by default)
+      mojeek/              # scrape (disabled: Altcha CAPTCHA)
+      ddg/                 # scrape (SearXNG mechanism)
+      google/              # official API → public CSE (HTML scrape retired)
+      brave/               # keyed Search API
+      bing/                # keyed Web Search v7
+      tavily/              # keyed AI search
+      jina/                # keyed AI search
+    search/                # dispatcher: fan-out, wrap EngineRun, collector
+    rank/                  # RRF scoring, dedup, text normalization/caps, sort
+    format/                # output: json, jsonl, text, table, raw, no-merge
+  cgo/                     # separate Go module: -buildmode=c-shared exports
+                           #   MSTSearch / MSTListEngines / MSTFreeResult
+  python/                  # Cython/ctypes binding, pytest suite, SPEC, README
+  scripts/                 # check_skill_pin.sh (release gate)
+  skills/                  # Agent Skills (web-search) + DEPENDENCIES.md
 ```
+
+`internal/cgoapi` is the single implementation of plan resolution (§4/§6) and
+the merged execute path (§7–§10); both `cmd/mst` and `cgo/` call it, so the CLI
+and the Python binding cannot drift. `internal/cli` owns flag parsing only;
+`cmd/mst` keeps the thin I/O shell (`--dry-run`, `--schema`, `--fields`
+emission). Test fixtures are inline in each package's `_test.go` files — there
+is no shared `testdata/` directory.
 
 ## 16. Roadmap
 
