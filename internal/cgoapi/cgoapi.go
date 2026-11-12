@@ -21,9 +21,11 @@ import (
 	"github.com/openmtx/meta-search-tool/internal/engine/bing"
 	"github.com/openmtx/meta-search-tool/internal/engine/brave"
 	"github.com/openmtx/meta-search-tool/internal/engine/ddg"
+	"github.com/openmtx/meta-search-tool/internal/engine/europepmc"
 	"github.com/openmtx/meta-search-tool/internal/engine/google"
 	"github.com/openmtx/meta-search-tool/internal/engine/grokipedia"
 	"github.com/openmtx/meta-search-tool/internal/engine/hackernews"
+	"github.com/openmtx/meta-search-tool/internal/engine/jina"
 	"github.com/openmtx/meta-search-tool/internal/engine/mojeek"
 	"github.com/openmtx/meta-search-tool/internal/engine/pubmed"
 	"github.com/openmtx/meta-search-tool/internal/engine/stackexchange"
@@ -164,6 +166,7 @@ func resolve(flags *cli.Flags, cfg *config.Config, reg *engine.Registry) (*resol
 			opts.IncludeAnswer = *ec.IncludeAnswer
 		}
 		opts.SearchDepth = ec.SearchDepth
+		opts.JinaEngine = ec.JinaEngine
 		engineOpts[name] = opts
 	}
 
@@ -464,6 +467,14 @@ func DefaultRegistry() *engine.Registry {
 	}
 	if err := reg.Register(tavily.New()); err != nil {
 		panic("tavily: " + err.Error())
+	}
+	// Newer engines are appended so existing registration-order tie-breaks
+	// (and therefore existing result ordering) stay stable.
+	if err := reg.Register(europepmc.New()); err != nil {
+		panic("europepmc: " + err.Error())
+	}
+	if err := reg.Register(jina.New()); err != nil {
+		panic("jina: " + err.Error())
 	}
 	return reg
 }

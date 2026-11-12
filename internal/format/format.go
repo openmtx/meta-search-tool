@@ -262,11 +262,12 @@ func BuildUnmerged(runs []engine.EngineRun) []UnmergedResult {
 	out := make([]UnmergedResult, 0)
 	for _, run := range runs {
 		for _, r := range run.Results {
+			title := rank.NormalizeTitle(r.Title)
 			out = append(out, UnmergedResult{
-				Title:   r.Title,
+				Title:   title,
 				URL:     r.URL,
 				Source:  rank.SourceFromURL(r.URL),
-				Snippet: r.Snippet,
+				Snippet: rank.NormalizeSnippet(title, r.Snippet),
 				Engine:  run.Engine,
 			})
 		}

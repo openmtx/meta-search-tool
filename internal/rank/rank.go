@@ -245,11 +245,12 @@ func Rank(runs []engine.EngineRun, weights map[string]float64, regOrder map[stri
 			return lookupReg(regOrder, engines[i]) < lookupReg(regOrder, engines[j])
 		})
 
+		title := NormalizeTitle(a.bestResult.Title)
 		out = append(out, RankedResult{
-			Title:     a.bestResult.Title,
+			Title:     title,
 			URL:       a.bestResult.URL,
 			Source:    SourceFromURL(a.bestResult.URL),
-			Snippet:   a.bestResult.Snippet,
+			Snippet:   NormalizeSnippet(title, a.bestResult.Snippet),
 			Score:     a.score,
 			Engines:   engines,
 			canonical: canon,

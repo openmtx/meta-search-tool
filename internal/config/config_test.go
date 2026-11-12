@@ -145,3 +145,21 @@ func TestLoad_MSTConfigHomeDirect(t *testing.T) {
 		t.Errorf("limit = %d, want 7 (MST_CONFIG_HOME must be read as the config dir directly)", cfg.Defaults.Limit)
 	}
 }
+
+func TestLoad_JinaEngineOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, configFile)
+	content := "version: 1\nengines:\n  jina:\n    enabled: true\n    engine: google\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withMSTConfigHome(t, tmpDir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := cfg.Engines["jina"].JinaEngine; got != "google" {
+		t.Errorf("jina engine = %q, want google", got)
+	}
+}

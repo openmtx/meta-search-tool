@@ -48,6 +48,7 @@ type EngineConfig struct {
 	Timeout       string  `yaml:"timeout"`
 	IncludeAnswer *bool   `yaml:"include_answer,omitempty"` // Tavily: request AI-generated answer
 	SearchDepth   string  `yaml:"search_depth,omitempty"`   // Tavily: "basic" or "advanced"
+	JinaEngine    string  `yaml:"engine,omitempty"`         // Jina: "reader" (default), "google", "bing"
 }
 
 // EngineConfigs maps engine names to their config entries.

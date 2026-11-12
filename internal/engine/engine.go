@@ -35,11 +35,13 @@ type Result struct {
 //
 // IncludeAnswer and SearchDepth are tavily-specific options (§5 Tier D) that
 // control whether the API returns an AI-generated answer and the search depth
-// ("basic" or "advanced"). They are zero-valued for other engines.
+// ("basic" or "advanced"). JinaEngine selects Jina's backend (reader/google/
+// bing). They are zero-valued for other engines.
 type Options struct {
 	Limit         int
 	IncludeAnswer bool   // Tavily: request AI-generated answer in response
 	SearchDepth   string // Tavily: "basic" (default) or "advanced"
+	JinaEngine    string // Jina: "reader" (default), "google", or "bing"
 }
 
 // EngineInfo is static, compile-time metadata declared by each engine. The

@@ -473,3 +473,21 @@ func sampleResults() []rank.RankedResult {
 		{Rank: 2, Title: "Understanding Go Routines", URL: "https://example.com/go-routines", Source: "example.com", Snippet: "Routines are lightweight threads managed by the Go runtime.", Score: 0.032, Engines: []string{"wiki"}},
 	}
 }
+
+func TestBuildUnmerged_NormalizesText(t *testing.T) {
+	long := strings.Repeat("x", 1500)
+	runs := []engine.EngineRun{{Engine: "e", Results: []engine.Result{
+		{Title: "  spaced\n title ", URL: "https://e.example/1", Snippet: long},
+		{Title: "Same", URL: "https://e.example/2", Snippet: "Same"},
+	}}}
+	got := BuildUnmerged(runs)
+	if got[0].Title != "spaced title" {
+		t.Errorf("title = %q, want %q", got[0].Title, "spaced title")
+	}
+	if len([]rune(got[0].Snippet)) > rank.MaxSnippetChars+2 {
+		t.Errorf("snippet not capped: %d runes", len([]rune(got[0].Snippet)))
+	}
+	if got[1].Snippet != "" {
+		t.Errorf("duplicate title/snippet should be dropped, got %q", got[1].Snippet)
+	}
+}
