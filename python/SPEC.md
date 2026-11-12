@@ -1,6 +1,6 @@
 # mst-python — Python / CGO Extension
 
-**Version:** 0.5.0
+**Version:** 0.6.0
 
 **Status:** Active
 **Module:** `mst` (PyPI: `mst`)
@@ -342,7 +342,9 @@ The engine selection follows the same rules as the Go CLI:
 | B | `grokipedia` | No | No | reference |
 | A | `mojeek` | No | No | general |
 | C | `bing` | `BING_API_KEY` | No* | general |
+| B | `europepmc` | No | Yes | academic |
 | D | `tavily` | `TAVILY_API_KEY` | No* | general |
+| D | `jina` | `JINA_API_KEY` | No* | general |
 
 *\*Enabled if key is present.*
 
@@ -480,16 +482,18 @@ requires `gcc`.
 ### CI/CD (PyPI Publishing)
 
 The `.github/workflows/publish-python.yml` workflow builds wheels for:
-- **Linux x86_64**: Python 3.11, 3.12, 3.13
-- **macOS Intel** (macos-13): Python 3.11, 3.12, 3.13
-- **macOS ARM64** (macos-14): Python 3.11, 3.12, 3.13
+- **Linux** x86_64 (manylinux) + ARM64: Python 3.11, 3.12, 3.13
+- **macOS** Intel + ARM64 (macOS 11+ deployment target): Python 3.11, 3.12, 3.13
+- **Windows** x86_64: Python 3.11, 3.12, 3.13
 
-Triggered by pushing a `py-v*` tag (e.g. `py-v0.1.0`). Uploads to PyPI via
-twine with the `PYPI_API_TOKEN` secret.
+Triggered by pushing the same `v*` tag as the CLI release (`release.yml`), which
+is also the version embedded in the wheel (`MST_VERSION`). Uploads to PyPI via
+the workflow's trusted publishing / `PYPI_API_TOKEN` secret.
 
-**Tag convention:** Use `v0.3.2` for the Go binary release and `py-v0.3.2` for
-the Python wheel release — they share the same version number but use different
-prefixes to avoid conflicts.
+**Tag convention:** one `v*` tag releases both the CLI and the Python wheel at
+the same version (single-tag release, DECISIONS 2026-07-11). `check_skill_pin.sh`
+runs on tag pushes and fails if `skills/web-search/scripts/setup.sh` still pins
+an older `mst`.
 
 ## Testing
 
