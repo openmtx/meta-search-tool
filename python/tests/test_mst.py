@@ -382,3 +382,83 @@ def test_search_live_proxy_is_used_and_never_falls_back_to_direct():
     finally:
         server.shutdown()
         server.server_close()
+
+
+@LIVE
+def test_search_live_proxy_tunnels_requests_and_returns_results():
+    """A pass-through logging proxy proves successful traffic traverses it.
+
+    The rejecting-proxy test above proves there is no direct fallback. This one
+    covers the positive path: the proxy records the engine host, tunnels the TLS
+    connection, and the search returns a normal envelope (§6, §14).
+    """
+    import http.server
+    import socket
+    import threading
+
+    hits = []
+
+    class LoggingProxy(http.server.BaseHTTPRequestHandler):
+        def do_CONNECT(self):  # HTTPS engines tunnel via CONNECT
+            host, _, port = self.path.rpartition(":")
+            hits.append(host)
+            try:
+                upstream = socket.create_connection(
+                    (host, int(port) if port else 443), timeout=15
+                )
+            except OSError:
+                self.send_error(502)
+                return
+            self.send_response(200, "Connection Established")
+            self.end_headers()
+            self.close_connection = True
+            self._relay(self.connection, upstream)
+
+        @staticmethod
+        def _relay(client, upstream):
+            def pump(src, dst):
+                try:
+                    while chunk := src.recv(65536):
+                        dst.sendall(chunk)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        dst.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
+
+            worker = threading.Thread(target=pump, args=(client, upstream), daemon=True)
+            worker.start()
+            pump(upstream, client)
+            worker.join(timeout=15)
+            upstream.close()
+
+        def log_message(self, *args):  # keep pytest output clean
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), LoggingProxy)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        proxy = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            res = mst.search(
+                "Alan Turing",
+                engines=["wikipedia"],
+                limit=3,
+                timeout="15s",
+                proxy=proxy,
+            )
+        except mst.MSTError as exc:
+            assert hits, "no request reached the proxy (traffic did not use it)"
+            pytest.skip(f"live search unavailable through proxy: {exc}")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert hits, "no request reached the proxy (traffic did not use it)"
+    assert any("wikipedia" in host for host in hits), hits
+    assert isinstance(res.get("results"), list)
+    assert res["engines"]["wikipedia"]["ok"] is True
