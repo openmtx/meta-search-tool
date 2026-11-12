@@ -8,10 +8,10 @@ description: >-
 license: Apache-2.0
 compatibility: Auto-installs pinned `mst` + `webclaw` to ~/.local/bin/ (on PATH); no key required by default.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   requires:
     mst: ">=0.5,<1.0"
-    webclaw: ">=0.6,<1.0"
+    webclaw: ">=0.7,<1.0"
 ---
 
 # web-search (mst → webclaw)

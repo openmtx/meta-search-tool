@@ -29,7 +29,7 @@ metadata:
   version: "1.0.0"                 # this skill's own version
   requires:                        # nested: tool → semver range
     mst: ">=0.5,<1.0"
-    webclaw: ">=0.6,<1.0"
+    webclaw: ">=0.7,<1.0"
 ---
 ```
 
