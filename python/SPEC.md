@@ -1,7 +1,8 @@
 # mst-python — Python / CGO Extension
 
-**Version:** 0.1.0  
-**Status:** Draft  
+**Version:** 0.5.0
+
+**Status:** Active
 **Module:** `mst` (PyPI: `mst`)
 
 > Note: PyPI name is `mst` but the import package is also `mst`. No naming conflict —
@@ -221,6 +222,33 @@ result = mst.search(
 # Pagination
 result = mst.search("deep learning", offset=10, limit=5)
 ```
+
+### `await search_async(query, engines=None, limit=10, offset=0, rrf_k=60, timeout="8s", weights=None) → dict`
+
+Async wrapper around `search()`. It accepts and forwards the same arguments,
+returns the same envelope, and raises the same `MSTError`. Implementation is a
+thin `asyncio.to_thread(search, ...)` call — not a second search path.
+
+```python
+import asyncio
+import mst
+
+async def main():
+    envelope = await mst.search_async("python asyncio", limit=5)
+    print(envelope["results"])
+
+asyncio.run(main())
+```
+
+**Thread safety:** concurrent `search()` and `search_async()` calls are
+supported. The native CGO library is loaded with `ctypes.CDLL`, which releases
+the GIL around `MSTSearch`/`MSTListEngines`; `asyncio.to_thread` uses the loop's
+default executor (`min(32, os.cpu_count() + 4)` workers).
+
+**Timeout/cancellation:** the `timeout` argument bounds the native Go search.
+`asyncio.wait_for`/task cancellation cancels only the await; a worker thread may
+finish in the background. A later call is unaffected. There is deliberately no
+native cancellation handle in v0.5.
 
 ### `list_engines() → list[dict]`
 
@@ -442,7 +470,7 @@ The extension ships with two test suites:
    - `search()` returns valid parsed JSON matching the envelope schema
    - Engine selection and weighting work correctly
    - Error cases produce correct exception types and messages
-   - `list_engines()` returns all 12 engines with correct metadata
+   - `list_engines()` returns all 14 engines with correct metadata
 
 Tests run via: `pytest python/tests/`
 

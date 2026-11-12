@@ -24,11 +24,12 @@ for r in result['results']:
 
 ## Features
 
-- **12 engines** across general web, academic, reference, Q&A, and AI categories
+- **14 engines** across general web, academic, reference, Q&A, and AI categories
 - **Concurrent fan-out** with per-engine timeouts — a slow engine never blocks the run
 - **RRF ranking** with configurable per-engine weights and smoothing constant
-- **Keyless engines** work out of the box: DuckDuckGo, Google, Wikipedia, arXiv, and more
-- **Keyed engines** (Brave, Bing, Tavily) ready when you set their API keys
+- **Keyless engines** work out of the box: DuckDuckGo, Google, Wikipedia, arXiv, Europe PMC, and more
+- **Keyed engines** (Brave, Bing, Tavily, Jina) ready when you set their API keys
+- **Async API** (`search_async`) for asyncio consumers; the native call releases the GIL
 
 ## Installation
 
@@ -68,6 +69,37 @@ print(result)
 | `weights` | `dict[str, float]` or `None` | `None` | Per-engine weight overrides |
 
 Returns a dict with `query`, `took_ms`, `results` (list of ranked results).
+
+### `await mst.search_async(...)`
+
+Async wrapper around `mst.search()` with the same arguments, return value, and
+`MSTError` behavior. It is **additive**: existing consumers that call
+`asyncio.to_thread(mst.search, ...)` keep working and can adopt the wrapper
+later without a breaking change. It forwards the blocking native call to
+`asyncio.to_thread`, so the event loop keeps running during a search. The native
+CGO library releases the GIL, so concurrent `search_async()` calls overlap
+instead of serializing.
+
+```python
+import asyncio
+import mst
+
+async def main():
+    results = await asyncio.gather(
+        mst.search_async("rust async", limit=5),
+        mst.search_async("python asyncio", limit=5),
+        mst.search_async("go concurrency", limit=5),
+    )
+    for result in results:
+        print(result["query"], len(result["results"]))
+
+asyncio.run(main())
+```
+
+Cancellation note: `asyncio.wait_for(asyncio.shield(...))` and task cancellation
+stop the *await*, not the native call. The `timeout` argument bounds the Go-side
+search; a cancelled worker may finish in the background, and subsequent calls
+are unaffected.
 
 ### `mst.list_engines()`
 

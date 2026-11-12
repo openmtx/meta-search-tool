@@ -15,6 +15,10 @@ if _platform.system() == "Windows":
     _cgo_path = os.path.join(os.path.dirname(__file__), "_mst.dll")
 else:
     _cgo_path = os.path.join(os.path.dirname(__file__), "_mst.so")
+# ctypes.CDLL releases the GIL around foreign calls. This is required for the
+# async API: `search_async()` offloads MSTSearch to a worker thread while the
+# event loop keeps running. Do not switch to PyDLL (or a binding that holds the
+# GIL), or every asyncio loop will block for the duration of a search.
 _lib = ctypes.CDLL(_cgo_path)
 
 # Set up function signatures — use c_void_p to preserve Go-allocated pointers

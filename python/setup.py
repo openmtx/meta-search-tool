@@ -82,6 +82,8 @@ def build_cgo():
             # .git ownership).
             "-buildvcs=false",
             "-buildmode=c-shared",
+            # Bake the release tag into the contactable API-engine User-Agent.
+            "-ldflags", f"-X github.com/openmtx/meta-search-tool/internal/engine.UserAgentVersion={resolve_version()}",
             "-o", str(CGO_LIB),
             ".",
         ],
