@@ -24,9 +24,6 @@ import (
 // apiBase is the Brave Search API endpoint. Tests override it via SetAPIBase.
 var apiBase = "https://api.search.brave.com/res/v1/web/search"
 
-// userAgent is the HTTP User-Agent sent to Brave (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -97,8 +94,9 @@ func (b *brave) fetch(ctx context.Context, q string, opts engine.Options) ([]eng
 			return nil, err
 		}
 		httpReq.Header.Set("Accept", "application/json")
+		httpReq.Header.Set("Cache-Control", "no-cache")
 		httpReq.Header.Set("X-Subscription-Token", apiKey)
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 

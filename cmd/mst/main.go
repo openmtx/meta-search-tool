@@ -30,6 +30,7 @@ import (
 var version = "dev"
 
 func main() {
+	engine.SetUserAgentVersion(version)
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, cgoapi.DefaultRegistry()))
 }
 

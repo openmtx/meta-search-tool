@@ -788,6 +788,11 @@ func TestSearch_Live(t *testing.T) {
 
 	// FetchLimit for --limit 10 → max((0+10)*3, 20) = 30.
 	results, err := e.Search(ctx, "go programming language", engine.Options{Limit: 30})
+	if errors.Is(err, ErrCaptcha) {
+		// This is the expected outcome on IPs DDG considers suspicious. Keep the
+		// probe informative without making normal (MST_ITEST=1) runs flaky.
+		t.Skip("live ddg was blocked by DDG's CAPTCHA; this is environmental (IP reputation), not a code failure")
+	}
 	if err != nil {
 		t.Fatalf("live ddg search failed (selectors may have drifted or IP blocked): %v", err)
 	}

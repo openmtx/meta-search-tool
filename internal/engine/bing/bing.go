@@ -25,9 +25,6 @@ import (
 // apiBase is the Bing Web Search v7 API endpoint. Tests override it via SetAPIBase.
 var apiBase = "https://api.bing.microsoft.com/v7.0/search"
 
-// userAgent is the HTTP User-Agent sent to Bing (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -100,7 +97,7 @@ func (b *bing) fetch(ctx context.Context, q string, opts engine.Options) ([]engi
 		}
 		httpReq.Header.Set("Accept", "application/json")
 		httpReq.Header.Set("Ocp-Apim-Subscription-Key", apiKey)
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 

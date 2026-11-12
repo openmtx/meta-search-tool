@@ -8,11 +8,14 @@ package main
 import "C"
 import (
 	"encoding/json"
+	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unsafe"
 
 	"github.com/openmtx/meta-search-tool/internal/cgoapi"
+	"github.com/openmtx/meta-search-tool/internal/engine"
 	"github.com/openmtx/meta-search-tool/internal/format"
 )
 
@@ -20,8 +23,18 @@ import (
 // Search/ListEngines); no engine package has an init() side effect, so no
 // blank imports are needed here.
 
-// main is required by -buildmode=c-shared.
-func main() {}
+// main is required by -buildmode=c-shared. It seeds the API-engine User-Agent
+// version from the build environment (MST_VERSION) or Go build info so the
+// Python binding identifies itself like the CLI.
+func main() {
+	if v := os.Getenv("MST_VERSION"); v != "" {
+		engine.SetUserAgentVersion(v)
+		return
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		engine.SetUserAgentVersion(info.Main.Version)
+	}
+}
 
 // MSTSearch executes a meta-search query via the mst run() pipeline.
 // Returns JSON string on success, or structured error on failure.

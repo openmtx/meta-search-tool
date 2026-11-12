@@ -32,9 +32,6 @@ import (
 // correct path.
 var apiBase = "https://eutils.ncbi.nlm.nih.gov"
 
-// userAgent is the HTTP User-Agent sent to PubMed (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -103,7 +100,7 @@ func (p *pubmed) esearch(ctx context.Context, q string, limit int) ([]string, er
 		if err != nil {
 			return nil, err
 		}
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 
@@ -142,7 +139,7 @@ func (p *pubmed) esummary(ctx context.Context, pmids []string) ([]engine.Result,
 		if err != nil {
 			return nil, err
 		}
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 

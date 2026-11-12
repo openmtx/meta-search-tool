@@ -177,8 +177,8 @@ func TestSearch_Httptest(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
-		if r.Header.Get("User-Agent") != userAgent {
-			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), userAgent)
+		if r.Header.Get("User-Agent") != engine.UserAgent() {
+			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), engine.UserAgent())
 		}
 		if r.Header.Get("Accept") != "application/json" {
 			t.Errorf("Accept = %q, want application/json", r.Header.Get("Accept"))

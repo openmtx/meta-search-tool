@@ -32,9 +32,6 @@ import (
 // apiBase is the Tavily Search API endpoint. Tests override it via SetAPIBase.
 var apiBase = "https://api.tavily.com/search"
 
-// userAgent is the HTTP User-Agent sent to Tavily (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -126,7 +123,7 @@ func (t *tavily) fetch(ctx context.Context, q string, opts engine.Options) ([]en
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 

@@ -27,9 +27,6 @@ import (
 // the correct path.
 var apiBase = "https://grokipedia.com"
 
-// userAgent is the HTTP User-Agent sent to Grokipedia (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -93,7 +90,7 @@ func (g *grokipedia) fetch(ctx context.Context, q string, opts engine.Options) (
 		if err != nil {
 			return nil, err
 		}
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 

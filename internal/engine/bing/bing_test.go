@@ -102,8 +102,8 @@ func TestSearch_Httptest(t *testing.T) {
 		if got := r.Header.Get("Accept"); got != "application/json" {
 			t.Errorf("Accept = %q, want application/json", got)
 		}
-		if got := r.Header.Get("User-Agent"); got != userAgent {
-			t.Errorf("User-Agent = %q, want %q", got, userAgent)
+		if got := r.Header.Get("User-Agent"); got != engine.UserAgent() {
+			t.Errorf("User-Agent = %q, want %q", got, engine.UserAgent())
 		}
 		if got := r.Header.Get("Ocp-Apim-Subscription-Key"); got == "" {
 			t.Error("Ocp-Apim-Subscription-Key header missing")

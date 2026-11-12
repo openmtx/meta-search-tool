@@ -27,9 +27,6 @@ type apiResponse []json.RawMessage
 // apiBase is the Wikipedia OpenSearch endpoint. Tests override it via SetAPIBase.
 var apiBase = "https://en.wikipedia.org/w/api.php"
 
-// userAgent is the HTTP User-Agent sent to Wikipedia (§12).
-const userAgent = "mst/dev"
-
 // SetAPIBase overrides the API base URL for testing. Callers must restore the
 // original value after the test (typically via defer).
 func SetAPIBase(base string) { apiBase = base }
@@ -94,7 +91,7 @@ func (w *wikipedia) fetch(ctx context.Context, q string, opts engine.Options) ([
 			return nil, err
 		}
 		httpReq.Header.Set("Accept", "application/json")
-		httpReq.Header.Set("User-Agent", userAgent)
+		httpReq.Header.Set("User-Agent", engine.UserAgent())
 		return httpReq, nil
 	}
 
