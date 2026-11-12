@@ -1,16 +1,16 @@
 ---
 name: web-search
 description: >-
-  End-to-end web research combining `mst` (meta-search across 12 engines, RRF-ranked)
+  End-to-end web research combining `mst` (meta-search across 14 engines, RRF-ranked)
   with `webclaw` (local page extraction). `mst` discovers URLs; `webclaw` reads them.
   Auto-installs pinned versions to ~/.local/bin/ on first use. No key required by default;
   set WEBCLAW_API_KEY for JS-rendered / bot-protected pages.
 license: Apache-2.0
 compatibility: Auto-installs pinned `mst` + `webclaw` to ~/.local/bin/ (on PATH); no key required by default.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   requires:
-    mst: ">=0.3,<1.0"
+    mst: ">=0.5,<1.0"
     webclaw: ">=0.6,<1.0"
 ---
 

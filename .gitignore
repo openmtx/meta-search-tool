@@ -32,6 +32,9 @@ Thumbs.db
 # Python extension build artifacts (the Cython source _mst.pyx IS committed;
 # the generated C / header / .so / bytecode are build outputs)
 python/build/
+python/dist/
+python/.venv/
+python/src/*.egg-info/
 __pycache__/
 *.pyc
 .pytest_cache/

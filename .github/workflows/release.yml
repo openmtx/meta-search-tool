@@ -9,8 +9,17 @@ permissions:
   contents: write
 
 jobs:
+  pin-check:
+    name: Verify skill pin matches release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check skills/web-search pin
+        run: ./scripts/check_skill_pin.sh
+
   build:
     name: ${{ matrix.os }}-${{ matrix.arch }}
+    needs: pin-check
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,7 +56,7 @@ jobs:
           bin="mst"
           [[ "$os" == "windows" ]] && bin="mst.exe"
 
-          go build -ldflags="-X main.version=$tag" -o "$bin" ./cmd/mst
+          go build -ldflags="-X main.version=$tag -X github.com/openmtx/meta-search-tool/internal/engine.UserAgentVersion=$tag" -o "$bin" ./cmd/mst
 
           # Package: mst-<tag>-<os>-<arch>.tar.gz or .zip
           dir="mst-${tag}-${os}-${arch}"
