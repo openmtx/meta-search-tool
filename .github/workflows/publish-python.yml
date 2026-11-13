@@ -159,10 +159,169 @@ jobs:
           path: python/dist/*.whl
           if-no-files-found: error
 
+  # --- Verify every built wheel on its matching platform and Python ---------
+  # Building proves compilation; only installation proves the artifact works.
+  # v0.4.0/v0.4.1 shipped no usable win_amd64/cp314 wheels and nothing in CI
+  # noticed — users hit a CGO source build instead. This gate installs the
+  # exact bytes that will be uploaded into a fresh venv on the matching
+  # runner/CPython and runs the offline test suite against them. The suite is
+  # deterministic (spec §14): no network, no timing races.
+  verify-wheels:
+    name: Verify wheel · ${{ matrix.os }} · Python ${{ matrix.python }}
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-latest glibc (2.39) >= 2.34, so manylinux_2_34 wheels load.
+          - { os: ubuntu-latest, python: "3.11", artifact: wheels-linux-311 }
+          - { os: ubuntu-latest, python: "3.12", artifact: wheels-linux-312 }
+          - { os: ubuntu-latest, python: "3.13", artifact: wheels-linux-313 }
+          - { os: ubuntu-latest, python: "3.14", artifact: wheels-linux-314 }
+          - { os: macos-latest, python: "3.11", artifact: wheels-macos-arm64-3.11 }
+          - { os: macos-latest, python: "3.12", artifact: wheels-macos-arm64-3.12 }
+          - { os: macos-latest, python: "3.13", artifact: wheels-macos-arm64-3.13 }
+          - { os: macos-latest, python: "3.14", artifact: wheels-macos-arm64-3.14 }
+          - { os: windows-latest, python: "3.11", artifact: wheels-windows-3.11 }
+          - { os: windows-latest, python: "3.12", artifact: wheels-windows-3.12 }
+          - { os: windows-latest, python: "3.13", artifact: wheels-windows-3.13 }
+          - { os: windows-latest, python: "3.14", artifact: wheels-windows-3.14 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheel/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python }}"
+
+      - name: Install wheel into a fresh venv
+        run: |
+          python -m venv .venv-verify
+          VENV_PY=".venv-verify/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-verify/Scripts/python.exe"
+          "$VENV_PY" -m pip install --upgrade --quiet pip
+          "$VENV_PY" -m pip install --quiet pytest
+          "$VENV_PY" -m pip install --quiet wheel/*.whl
+
+      # Guard against the suite silently testing the source tree instead of the
+      # wheel (conftest.py falls back to src/ when mst is not importable).
+      - name: Assert the wheel is what is imported
+        run: |
+          VENV_PY=".venv-verify/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-verify/Scripts/python.exe"
+          "$VENV_PY" - <<'EOF'
+          import pathlib, sysconfig
+          import mst
+          expected_root = pathlib.Path(sysconfig.get_paths()["purelib"]).resolve()
+          actual = pathlib.Path(mst.__file__).resolve()
+          assert expected_root in actual.parents, (
+              f"mst imported from {actual}, expected under {expected_root}")
+          print(f"mst loaded from wheel: {actual}")
+          EOF
+
+      - name: Run offline test suite against the wheel
+        run: |
+          VENV_PY=".venv-verify/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-verify/Scripts/python.exe"
+          "$VENV_PY" -m pytest python/tests -q
+
+  # --- Coverage gate: the exact wheel set must exist before upload -----------
+  # A matrix leg can succeed while producing no wheel (or the wrong platform
+  # tag). v0.4.0 shipped no Windows/3.14 wheels; `twine check` would not have
+  # caught it because twine only sees metadata of files that exist. This gate
+  # asserts every expected (platform, CPython) combination is present with the
+  # right tag, and runs twine's metadata check over the full set.
+  wheel-coverage:
+    name: Wheel coverage and metadata
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Assert every expected wheel exists with the right platform tag
+        run: |
+          python - <<'EOF'
+          import re
+          from pathlib import Path
+
+          wheels = sorted(p.name for p in Path("dist").glob("*.whl"))
+          # (python-tag fragment, required platform-tag fragment) per artifact.
+          expected = [
+              (f"cp{py}", marker)
+              for py in ("311", "312", "313", "314")
+              for marker in ("manylinux_2_34_x86_64", "macosx", "win_amd64")
+          ]
+          missing = [
+              (py, marker) for py, marker in expected
+              if sum(1 for name in wheels if py in name and marker in name) != 1
+          ]
+          if missing:
+              raise SystemExit(
+                  f"Wheel coverage incomplete for {missing}; got: {wheels}. "
+                  "Every platform x CPython leg must ship exactly one wheel — "
+                  "v0.4.0 shipped no win_amd64/cp314 wheels and users fell back "
+                  "to a CGO source build.")
+          assert len(wheels) == len(expected), f"unexpected extra wheels: {wheels}"
+          print(f"All {len(expected)} expected wheels present:")
+          for name in wheels:
+              print(f"  {name}")
+          EOF
+
+      - name: Metadata check
+        run: |
+          python -m pip install --quiet twine
+          twine check dist/*
+
+  # --- Live engine smoke over the shipped wheel (non-blocking) ---------------
+  # Deterministic gates above prove the binding works; this proves a release
+  # can actually fetch results from real engines. Runs live (MST_ITEST=1, spec
+  # §14) against one Linux wheel. Engine flakiness/rate limits must not block
+  # publishing, so failures here are reported but do not gate the upload.
+  live-smoke:
+    name: Live engine smoke (non-blocking)
+    needs: build-linux
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    env:
+      MST_ITEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-314
+          path: wheel/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install wheel and run live tests
+        run: |
+          python -m venv .venv-live
+          .venv-live/bin/python -m pip install --upgrade --quiet pip
+          .venv-live/bin/python -m pip install --quiet pytest
+          .venv-live/bin/python -m pip install --quiet wheel/*.whl
+          .venv-live/bin/python -m pytest python/tests -q -k live
+
   # --- Publish (tag pushes only) ---------------------------------------------
   upload:
     name: Upload to PyPI
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, verify-wheels, wheel-coverage]
     # Tag pushes publish automatically; a manual dispatch with `tag` is the
     # deliberate recovery path for an existing tag (e.g. runner failures).
     if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''

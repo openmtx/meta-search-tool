@@ -1,0 +1,149 @@
+name: Test
+
+# Always-on CI for pushes and PRs: run the Go suite and prove each platform's
+# wheel actually installs and passes the offline test suite.
+#
+# This closes a real gap: the only other workflows (publish-python.yml,
+# release.yml) are tag-gated, so before this file existed the offline pytest
+# suite and `go test ./...` only ran if someone ran them by hand. It also
+# complements the publish workflow's verify-wheels gate: there we test the
+# exact shipped artifact bytes for every matrix leg; here we get fast feedback
+# on a floor (3.11) and newest (3.14) Python per platform on every commit.
+#
+# Scope guard: only deterministic, offline tests run here (spec §14 — live
+# tests need MST_ITEST=1). No timing-sensitive sleeps, process races, or
+# monotonic-delta assertions; those flake on shared runners (the failure mode
+# observed in nanobot's Windows CI).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-test:
+    name: go test ./...
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  python-wheel-test:
+    name: wheel · ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor and newest supported CPython per platform (publish-python.yml
+        # covers the full 3.11–3.14 matrix at release time).
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.11" }
+          - { os: macos-latest, python: "3.14" }
+          - { os: windows-latest, python: "3.11" }
+          - { os: windows-latest, python: "3.14" }
+    env:
+      CGO_ENABLED: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python }}"
+
+      # --- Linux: same container build as the release pipeline ---------------
+      # Go's c-shared runtime needs GLIBC_2.34, so the shipped wheel floor is
+      # manylinux_2_34. Building natively here would produce a linux_x86_64
+      # wheel the host can load but users may not, so mirror the release build
+      # (container + auditwheel repair) and test the repaired artifact.
+      - name: Build + repair manylinux_2_34 wheel
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -e PY="cp${{ matrix.python == '3.11' && '311' || '314' }}" \
+            quay.io/pypa/manylinux_2_34_x86_64 bash -c '
+              set -euxo pipefail
+              curl -sSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | tar -C /usr/local -xz
+              export PATH=/usr/local/go/bin:$PATH CGO_ENABLED=1
+
+              PYBIN=/opt/python/$PY/bin
+              "$PYBIN/python" -m pip install --upgrade --quiet build cython auditwheel
+              ( cd /work/python && "$PYBIN/python" -m build --wheel )
+              "$PYBIN/python" -m auditwheel repair /work/python/dist/*.whl \
+                -w /work/wheels --plat manylinux_2_34_x86_64 || true
+              rm -rf /work/python/dist /work/python/build \
+                     /work/python/src/mst/_mst.c /work/python/src/mst.egg-info
+            '
+
+      # --- macOS / Windows: native build (same shape as publish) -------------
+      # No deployment-target overrides here: test.yml asserts the extension
+      # loads and behaves, not the platform tag (publish-python.yml's
+      # verify-wheels tests the actual shipped tag bytes).
+      - uses: actions/setup-go@v5
+        if: runner.os != 'Linux'
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build wheel
+        if: runner.os != 'Linux'
+        run: |
+          python -m pip install --upgrade --quiet build cython
+          ( cd python && python -m build --wheel )
+
+      # --- Install the wheel and run the offline suite ------------------------
+      # A fresh venv proves the wheel is self-sufficient (nothing is imported
+      # from the source tree: tests/conftest.py prefers an installed mst, and
+      # the committed package dir ships no compiled artifacts).
+      - name: Install wheel
+        run: |
+          python -m venv .venv-test
+          VENV_PY=".venv-test/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-test/Scripts/python.exe"
+          WHEEL_DIR="python/dist"
+          # The Linux container's auditwheel repair writes to the repo root
+          # (same layout as publish-python.yml), not python/dist.
+          [[ "$RUNNER_OS" == "Linux" ]] && WHEEL_DIR="wheels"
+          "$VENV_PY" -m pip install --upgrade --quiet pip
+          "$VENV_PY" -m pip install --quiet pytest
+          "$VENV_PY" -m pip install --quiet $WHEEL_DIR/*.whl
+
+      - name: Assert the wheel (not the source tree) is what we test
+        run: |
+          VENV_PY=".venv-test/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-test/Scripts/python.exe"
+          "$VENV_PY" - <<'EOF'
+          import pathlib, sysconfig
+          import mst
+          expected_root = pathlib.Path(sysconfig.get_paths()["purelib"]).resolve()
+          actual = pathlib.Path(mst.__file__).resolve()
+          assert expected_root in actual.parents, (
+              f"mst imported from {actual}, expected under {expected_root}; "
+              "the wheel install did not take and the suite would test the wrong code")
+          print(f"mst loaded from wheel: {actual}")
+          EOF
+
+      - name: Run offline test suite
+        run: |
+          VENV_PY=".venv-test/bin/python"
+          [[ "$RUNNER_OS" == "Windows" ]] && VENV_PY=".venv-test/Scripts/python.exe"
+          "$VENV_PY" -m pytest python/tests -q

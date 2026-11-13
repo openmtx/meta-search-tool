@@ -17,9 +17,30 @@ jobs:
       - name: Check skills/web-search pin
         run: ./scripts/check_skill_pin.sh
 
+  # Cross-compilation never executes the target code, so a tag could ship
+  # binaries that do not even start. Run the Go suite on the tagged commit
+  # before building anything for release.
+  go-test:
+    name: go test ./...
+    needs: pin-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
   build:
     name: ${{ matrix.os }}-${{ matrix.arch }}
-    needs: pin-check
+    needs: [pin-check, go-test]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -77,9 +98,60 @@ jobs:
           path: ${{ env.artifact }}
           if-no-files-found: error
 
+  # --- Smoke: run the shipped binaries on their native platform --------------
+  # release.yml builds every target by cross-compilation on ubuntu-latest, so
+  # no produced binary has ever been executed before being attached to a
+  # release. Run the targets that have a matching hosted runner and let
+  # --list-engines prove the binary starts and the engine registry initializes
+  # (it short-circuits before query resolution, so no network is needed).
+  # Remaining targets (linux-arm64, darwin-amd64, windows-arm64) stay covered
+  # by go-test; hosted runners for them are impractical here.
+  smoke:
+    name: Smoke ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-amd64, runner: ubuntu-latest }
+          - { target: darwin-arm64, runner: macos-latest }
+          - { target: windows-amd64, runner: windows-latest }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mst-${{ github.ref_name }}-${{ matrix.target }}
+          path: pkg/
+
+      - name: Run --list-engines with the shipped binary
+        run: |
+          cd pkg
+          # bsdtar (the default tar on runners) extracts .zip too, so one path
+          # handles both archive formats.
+          tar -xf mst-*.*
+          cd mst-*/
+          chmod +x mst*
+          BIN="./mst"
+          [[ "$RUNNER_OS" == "Windows" ]] && BIN="./mst.exe"
+          "$BIN" --list-engines > engines.json
+          python - <<'EOF'
+          import json
+          engines = json.load(open("engines.json"))
+          assert isinstance(engines, list) and engines, "empty engine registry"
+          for engine in engines:
+              assert {"name", "enabled"} <= set(engine), engine
+          names = {engine["name"] for engine in engines}
+          for required in ("ddg", "wikipedia"):
+              assert required in names, f"missing engine {required}"
+          print(f"smoke ok: {len(engines)} engines listed")
+          EOF
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
