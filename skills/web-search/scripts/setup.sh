@@ -96,7 +96,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$BIN_DIR"
 #                NAME     REPO                        TAG      SUMS_FILE       RANGE
-ensure_tool     mst      openmtx/meta-search-tool    v0.6.0   SHA256SUMS.txt  ">=0.6,<1.0"
+ensure_tool     mst      openmtx/meta-search-tool    v0.6.1   SHA256SUMS.txt  ">=0.6,<1.0"
 ensure_tool     webclaw  0xMassi/webclaw             v0.7.4  SHA256SUMS      ">=0.7,<1.0"
 
 # Ensure ~/.local/bin is on PATH for the current shell

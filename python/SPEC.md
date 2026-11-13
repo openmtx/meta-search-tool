@@ -1,6 +1,6 @@
 # mst-python — Python / CGO Extension
 
-**Version:** 0.6.0
+**Version:** 0.6.1
 
 **Status:** Active
 **Module:** `mst` (PyPI: `mst`)
