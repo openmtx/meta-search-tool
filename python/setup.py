@@ -143,6 +143,22 @@ def build_cgo():
 
 build_cgo()
 
+# macOS: dyld does not expand a bare dependency name ("_mst.so") against
+# LC_RPATH entries — rpath expansion applies only to "@rpath/..." paths. Go's
+# c-shared output records its install name as the bare basename, so the
+# extension links with "LOAD _mst.so" and dyld looks in the default library
+# dirs only, never next to the extension: the wheel fails to import. Rewrite
+# the install name to @loader_path (relative to whichever binary records it
+# as a dependency — the extension in the same package directory), so the
+# extension records "LOAD @loader_path/_mst.so" and resolves on its own.
+# Ad-hoc re-sign is required: arm64 macOS refuses modified, unsigned binaries.
+if _platform.system() == "Darwin":
+    subprocess.run(
+        ["install_name_tool", "-id", "@loader_path/_mst.so", str(CGO_LIB)],
+        check=True,
+    )
+    subprocess.run(["codesign", "-f", "-s", "-", str(CGO_LIB)], check=True)
+
 # On Windows, -buildmode=c-shared produces a .dll (PE). We link against
 # it directly; if the .a import lib exists we use that instead.
 # On Linux/macOS we pass the .so directly with rpath so ctypes can find it.
