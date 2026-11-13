@@ -129,9 +129,16 @@ jobs:
       - name: Run --list-engines with the shipped binary
         run: |
           cd pkg
-          # bsdtar (the default tar on runners) extracts .zip too, so one path
-          # handles both archive formats.
-          tar -xf mst-*.*
+          # GNU tar (Git Bash on Windows) cannot read .zip, and unzip is not on
+          # PATH there — extract via python's stdlib for zip, tar for tar.gz.
+          shopt -s nullglob
+          zips=(mst-*.zip)
+          tars=(mst-*.tar.gz)
+          if [ ${#zips[@]} -gt 0 ]; then
+            python -c "import zipfile, sys; zipfile.ZipFile(sys.argv[1]).extractall()" "${zips[0]}"
+          else
+            tar -xf "${tars[0]}"
+          fi
           cd mst-*/
           chmod +x mst*
           BIN="./mst"
