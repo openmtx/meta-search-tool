@@ -76,10 +76,15 @@ jobs:
       # (container + auditwheel repair) and test the repaired artifact.
       - name: Build + repair manylinux_2_34 wheel
         if: runner.os == 'Linux'
+        env:
+          # The manylinux image's interpreter dirs are named cp311-cp311 etc.
+          # (same layout publish-python.yml relies on).
+          PY: "cp${{ matrix.python == '3.11' && '311' || '314' }}-cp${{ matrix.python == '3.11' && '311' || '314' }}"
         run: |
           docker run --rm \
             -v "$PWD":/work -w /work \
-            -e PY="cp${{ matrix.python == '3.11' && '311' || '314' }}" \
+            -e MST_VERSION="$MST_VERSION" \
+            -e PY="$PY" \
             quay.io/pypa/manylinux_2_34_x86_64 bash -c '
               set -euxo pipefail
               curl -sSL https://go.dev/dl/go1.26.4.linux-amd64.tar.gz | tar -C /usr/local -xz

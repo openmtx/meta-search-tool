@@ -158,7 +158,17 @@ if _platform.system() == "Windows":
             str(CGO_LIB),
         ]
 else:
-    _link_args = ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
+    # macOS: ld64 does not understand $ORIGIN (it treats it as a literal
+    # directory name), so wheels built with it recorded
+    #   LOAD _mst.so / RPATH $ORIGIN
+    # and dyld could never resolve the Go c-shared library next to the
+    # extension — every macOS wheel shipped to date fails to import on a
+    # real Mac. Use @loader_path (ld64's equivalent) so the bare "LOAD
+    # _mst.so" dependency resolves against the package directory.
+    if _platform.system() == "Darwin":
+        _link_args = ["-Wl,-rpath,@loader_path", str(CGO_LIB)]
+    else:
+        _link_args = ["-Wl,-rpath,$ORIGIN", str(CGO_LIB)]
 
 extensions = [
     Extension(
